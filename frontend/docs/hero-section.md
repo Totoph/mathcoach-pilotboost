@@ -299,6 +299,240 @@
 
 ---
 
+## 2.B. Bento Box Alternative — Vertical List Style
+
+**Format liste verticale** (plus de texte, moins de visuel)
+
+```tsx
+<div className="bg-card rounded-xl py-6 shadow-sm 
+                border-2 border-transparent hover:border-[#0A6DFF]/20 
+                transition-all">
+  
+  {/* Header */}
+  <div className="px-6 mb-6">
+    <h3 className="font-semibold text-2xl mb-2">
+      Comment ça marche ?
+    </h3>
+    <p className="text-muted-foreground text-sm">
+      Un parcours structuré pour progresser rapidement
+    </p>
+  </div>
+  
+  {/* Features list */}
+  <div className="px-6 space-y-4">
+    
+    {/* Item 1 */}
+    <div className="flex items-start gap-3">
+      <svg className="w-5 h-5 text-[#0A6DFF] mt-0.5 flex-shrink-0">
+        {/* Check circle icon */}
+      </svg>
+      <div>
+        <p className="font-medium">Diagnostic initial (5 min)</p>
+        <p className="text-sm text-muted-foreground">
+          20 questions pour évaluer votre niveau et identifier vos lacunes
+        </p>
+      </div>
+    </div>
+    
+    {/* Item 2 */}
+    <div className="flex items-start gap-3">
+      <svg className="w-5 h-5 text-purple-600 mt-0.5 flex-shrink-0">
+        {/* Check circle icon */}
+      </svg>
+      <div>
+        <p className="font-medium">Plan d'entraînement personnalisé</p>
+        <p className="text-sm text-muted-foreground">
+          L'algorithme crée un programme adapté à votre profil et vos objectifs
+        </p>
+      </div>
+    </div>
+    
+    {/* Item 3 */}
+    <div className="flex items-start gap-3">
+      <svg className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0">
+        {/* Check circle icon */}
+      </svg>
+      <div>
+        <p className="font-medium">Exercices adaptatifs quotidiens</p>
+        <p className="text-sm text-muted-foreground">
+          15 minutes par jour avec difficulté ajustée automatiquement
+        </p>
+      </div>
+    </div>
+    
+    {/* Item 4 */}
+    <div className="flex items-start gap-3">
+      <svg className="w-5 h-5 text-[#FF7B00] mt-0.5 flex-shrink-0">
+        {/* Check circle icon */}
+      </svg>
+      <div>
+        <p className="font-medium">Tips et corrections instantanées</p>
+        <p className="text-sm text-muted-foreground">
+          Des astuces contextuelles pour comprendre vos erreurs et progresser
+        </p>
+      </div>
+    </div>
+    
+  </div>
+  
+</div>
+```
+
+**Utilisation :**
+- Plus de texte explicatif (parfait pour le "Comment ça marche")
+- Icons colorées (check circle) pour rythmer visuellement
+- Moins de place que le grid 2x3
+- Bon pour mobile (stack naturel)
+
+**Quand utiliser :**
+- **Grid 2x3** → Features visuelles avec stats/graphiques
+- **Liste verticale** → Process step-by-step ou features textuelles
+
+---
+
+## 2.C. Layout Recommandé — Mix des Deux Styles
+
+**Section Features complète** (2 rangées)
+
+```
+┌────────────────────────────────────────────────────────────┐
+│              Pourquoi MathCoach ?                          │
+│     Un entraînement scientifique adaptatif                 │
+├────────────────────────────────────────────────────────────┤
+│                                                            │
+│  ┌─────────────────────┐  ┌─────────────────────┐         │
+│  │  🎯 Diagnostic IA   │  │  🧠 Adaptatif       │         │
+│  │  (mini-features)    │  │  (stats visuals)    │         │
+│  └─────────────────────┘  └─────────────────────┘         │
+│                                                            │
+│  ┌─────────────────────┐  ┌─────────────────────┐         │
+│  │  💡 Tips contextuels│  │  📊 Analytics       │         │
+│  │  (example box)      │  │  (mock chart)       │         │
+│  └─────────────────────┘  └─────────────────────┘         │
+│                                                            │
+├────────────────────────────────────────────────────────────┤
+│                                                            │
+│  ┌──────────────────────────────────────────────────────┐ │
+│  │         Comment ça marche ? (Liste verticale)        │ │
+│  │                                                      │ │
+│  │  ✓ Diagnostic initial (5 min)                       │ │
+│  │  ✓ Plan personnalisé                                │ │
+│  │  ✓ Exercices adaptatifs quotidiens                  │ │
+│  │  ✓ Tips et corrections instantanées                 │ │
+│  └──────────────────────────────────────────────────────┘ │
+│                                                            │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Code :**
+
+```tsx
+<section className="py-20 px-4 bg-gradient-to-b from-white to-[#0A6DFF]/5">
+  
+  <div className="max-w-6xl mx-auto">
+    
+    {/* Section header */}
+    <div className="text-center mb-12">
+      <h2 className="text-4xl font-bold mb-4">
+        Pourquoi MathCoach ?
+      </h2>
+      <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
+        Un entraînement scientifique basé sur l'apprentissage adaptatif
+      </p>
+    </div>
+    
+    {/* Grid 2x2 - Features principales */}
+    <div className="grid md:grid-cols-2 gap-6 mb-6">
+      {/* 4 cards comme avant (Diagnostic, Adaptatif, Tips, Analytics) */}
+    </div>
+    
+    {/* Card full-width - Process step-by-step */}
+    <div className="bg-card rounded-xl py-6 shadow-sm 
+                    border-2 border-transparent hover:border-[#0A6DFF]/20 
+                    transition-all">
+      
+      <div className="px-6 mb-6">
+        <h3 className="font-semibold text-2xl mb-2">
+          Comment ça marche ?
+        </h3>
+        <p className="text-muted-foreground text-sm">
+          Un parcours structuré pour progresser rapidement
+        </p>
+      </div>
+      
+      <div className="px-6 space-y-4">
+        
+        <div className="flex items-start gap-3">
+          <CircleCheck className="w-5 h-5 text-[#0A6DFF] mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="font-medium">Diagnostic initial (5 min)</p>
+            <p className="text-sm text-muted-foreground">
+              20 questions pour évaluer votre niveau et identifier vos lacunes
+            </p>
+          </div>
+        </div>
+        
+        <div className="flex items-start gap-3">
+          <CircleCheck className="w-5 h-5 text-purple-600 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="font-medium">Plan d'entraînement personnalisé</p>
+            <p className="text-sm text-muted-foreground">
+              L'algorithme crée un programme adapté à votre profil et vos objectifs
+            </p>
+          </div>
+        </div>
+        
+        <div className="flex items-start gap-3">
+          <CircleCheck className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="font-medium">Exercices adaptatifs quotidiens</p>
+            <p className="text-sm text-muted-foreground">
+              15 minutes par jour avec difficulté ajustée automatiquement
+            </p>
+          </div>
+        </div>
+        
+        <div className="flex items-start gap-3">
+          <CircleCheck className="w-5 h-5 text-[#FF7B00] mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="font-medium">Tips et corrections instantanées</p>
+            <p className="text-sm text-muted-foreground">
+              Des astuces contextuelles pour comprendre vos erreurs et progresser
+            </p>
+          </div>
+        </div>
+        
+      </div>
+      
+    </div>
+    
+    {/* Info box final */}
+    <div className="mt-12 p-6 bg-muted/50 rounded-xl text-center max-w-3xl mx-auto">
+      <p className="text-sm text-muted-foreground">
+        💡 <span className="font-medium text-foreground">Bon à savoir :</span> 
+        Les utilisateurs qui s'entraînent 15 minutes par jour pendant 30 jours 
+        augmentent leur score de <span className="font-bold text-[#0A6DFF]">+35%</span> en moyenne.
+      </p>
+    </div>
+    
+  </div>
+  
+</section>
+```
+
+**Structure :**
+1. **Rangée 1** : Grid 2x2 (4 features avec visuels/stats)
+2. **Rangée 2** : Full-width card (process step-by-step)
+3. **Footer** : Info box avec stat clé
+
+**Avantages :**
+- Visuels attractifs en haut (grid 2x2)
+- Process détaillé en bas (liste verticale)
+- Responsive naturel (grid → stack)
+- Rythme visuel varié
+
+---
+
 ## 3. Section Témoignages (Fold 3)
 
 **Carousel ou grid de 3 témoignages**
