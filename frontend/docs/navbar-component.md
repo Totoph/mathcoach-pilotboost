@@ -217,6 +217,8 @@ className="ring-2 ring-[#0A6DFF]/20 hover:ring-[#0A6DFF]/40 transition-all"
 ## État initial
 
 - Navbar visible sur **toutes les pages** sauf Landing (optionnel)
+- **Pendant le diagnostic** : Logo seul (pas d'avatar, pas de bouton Dashboard)
+- **Après authentification** : Avatar + Dashboard actifs
 - Avatar affiche initiales dynamiques (calculées depuis `user.name`)
 - Dashboard popup reste fermé par défaut
 
