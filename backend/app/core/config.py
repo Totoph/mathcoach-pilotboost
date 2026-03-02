@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     supabase_key: str
     supabase_service_key: str
 
-    # OpenAI (for tips/techniques generation)
-    openai_api_key: str = ""
+    # Gemini (for agent conversations and tips)
+    gemini_api_key: str
 
     # JWT
     jwt_secret: str

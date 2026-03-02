@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime, timedelta
 from app.core.supabase import get_supabase_client
+from app.core.gemini import generate_agent_response, generate_feedback, generate_tip
 from app.schemas.agent import (
     AgentInstance, AgentState, ConversationMessage,
     ExercisePerformance, NextExerciseResponse, SubmitAnswerResponse
@@ -79,8 +80,13 @@ class AgentService:
         # Générer la question
         question, correct_answer = self._generate_question(exercise_type, difficulty)
         
-        # Choisir un tip adapté
-        tip = self._get_tip(exercise_type, difficulty)
+        # Générer un tip avec Gemini (async)
+        tip = None
+        if difficulty >= 2:
+            try:
+                tip = await generate_tip(exercise_type, difficulty)
+            except:
+                tip = None  # Fallback si Gemini échoue
         
         # Message d'intro de l'agent (contextualisé)
         agent_intro = self._get_intro_message(instance, exercise_type)
@@ -133,10 +139,14 @@ class AgentService:
         # Mettre à jour l'état de l'agent
         await self._update_agent_state(instance, is_correct, exercise_type, difficulty)
         
-        # Générer feedback personnalisé
-        agent_feedback = self._generate_feedback(
-            is_correct, exercise_type, difficulty, time_taken_ms
-        )
+        # Générer feedback personnalisé avec Gemini
+        try:
+            agent_feedback = await generate_feedback(
+                is_correct, exercise_type, difficulty, time_taken_ms
+            )
+        except:
+            # Fallback si Gemini échoue
+            agent_feedback = "Bravo ! 🎉" if is_correct else "Presque ! Continue comme ça. 💪"
         
         # Ajouter à la conversation
         await self._add_conversation(instance.id, "agent", agent_feedback)
@@ -158,8 +168,19 @@ class AgentService:
         # Enregistrer message utilisateur
         await self._add_conversation(instance.id, "user", message)
         
-        # Générer réponse de l'agent (simple pour l'instant)
-        response = self._generate_chat_response(instance, message)
+        # Construire contexte pour Gemini
+        context = f"""État de l'utilisateur :
+- Niveau : {instance.current_level}
+- Exercices faits : {instance.state.total_exercises}
+- Points forts : {', '.join(instance.state.strengths) if instance.state.strengths else 'En cours d\'évaluation'}
+- À travailler : {', '.join(instance.state.weaknesses) if instance.state.weaknesses else 'Rien pour l\'instant'}"""
+        
+        # Générer réponse avec Gemini
+        try:
+            response = await generate_agent_response(message, context)
+        except:
+            # Fallback si Gemini échoue
+            response = self._generate_chat_response(instance, message)
         
         # Enregistrer réponse agent
         await self._add_conversation(instance.id, "agent", response)
@@ -289,28 +310,7 @@ class AgentService:
         
         return "1 + 1 = ?", "2"
     
-    def _get_tip(self, exercise_type: str, difficulty: int) -> Optional[str]:
-        """Retourne un tip adapté"""
-        tips = {
-            "multiplication": [
-                "Décompose en (×10) puis ajuste",
-                "Pense aux doubles et moitiés",
-                "Utilise la distributivité"
-            ],
-            "addition": [
-                "Arrondis au multiple de 10 proche",
-                "Décompose en centaines + dizaines + unités"
-            ],
-            "division": [
-                "Cherche combien de fois le diviseur rentre",
-                "Pense à la table de multiplication inverse"
-            ]
-        }
-        
-        if exercise_type in tips and difficulty >= 2:
-            return random.choice(tips[exercise_type])
-        
-        return None
+    # Note: Tips sont maintenant générés par Gemini dans generate_next_exercise()
     
     def _get_intro_message(self, instance: AgentInstance, exercise_type: str) -> Optional[str]:
         """Message d'intro contextualisé de l'agent"""
@@ -329,32 +329,7 @@ class AgentService:
         except:
             return False
     
-    def _generate_feedback(
-        self, is_correct: bool, exercise_type: str,
-        difficulty: int, time_taken_ms: Optional[int]
-    ) -> str:
-        """Génère un feedback personnalisé"""
-        if is_correct:
-            fast = time_taken_ms and time_taken_ms < 10000
-            feedback = random.choice([
-                "Excellent ! 🎉",
-                "Bravo ! 👏",
-                "Parfait ! ✨",
-                "Super ! 🚀"
-            ])
-            
-            if fast:
-                feedback += " Et rapide en plus !"
-            
-            return feedback
-        else:
-            encouragement = random.choice([
-                "Pas grave, on continue ! 💪",
-                "Presque ! Tu progresses. 📈",
-                "On retente ? Tu vas y arriver ! 🎯"
-            ])
-            
-            return encouragement
+    # Note: Feedback est maintenant généré par Gemini dans submit_answer()
     
     def _generate_chat_response(self, instance: AgentInstance, message: str) -> str:
         """Génère une réponse conversationnelle (simple pour MVP)"""
