@@ -70,7 +70,7 @@ class NextExerciseRequest(BaseModel):
 
 class NextExerciseResponse(BaseModel):
     """Prochain exercice généré par l'agent"""
-    exercise_id: UUID
+    exercise_id: str  # Return as string for JSON serialization
     question: str
     exercise_type: str
     difficulty: int
@@ -81,7 +81,7 @@ class NextExerciseResponse(BaseModel):
 
 class SubmitAnswerRequest(BaseModel):
     """Soumission de réponse"""
-    exercise_id: UUID
+    exercise_id: str  # Accept as string, convert to UUID in service
     user_answer: str
     time_taken_ms: Optional[int] = None
     # Données de l'exercice (MVP : envoyées depuis le frontend)

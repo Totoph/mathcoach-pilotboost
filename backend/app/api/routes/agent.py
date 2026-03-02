@@ -112,7 +112,7 @@ async def submit_answer(
     
     result = await agent_service.submit_answer(
         user_id=user_id,
-        exercise_id=request.exercise_id,
+        exercise_id=UUID(request.exercise_id),
         user_answer=request.user_answer,
         question=request.question,
         correct_answer=request.correct_answer,

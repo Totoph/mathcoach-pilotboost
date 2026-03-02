@@ -95,7 +95,7 @@ class AgentService:
         exercise_id = uuid4()
         
         return NextExerciseResponse(
-            exercise_id=exercise_id,
+            exercise_id=str(exercise_id),
             question=question,
             exercise_type=exercise_type,
             difficulty=difficulty,
