@@ -95,9 +95,6 @@ async def get_next_exercise(
     return exercise
 
 
-# Store temporaire pour les exercices en cours (à améliorer avec Redis/cache)
-_active_exercises = {}
-
 @router.post("/submit-answer", response_model=SubmitAnswerResponse)
 async def submit_answer(
     request: SubmitAnswerRequest,
@@ -110,32 +107,19 @@ async def submit_answer(
     """
     user_id = UUID(current_user["id"])
     
-    # NOTE: Pour MVP, on stocke temporairement l'exercice côté client
-    # Le client doit renvoyer question, correct_answer, etc.
-    # TODO: Améliorer avec un cache serveur (Redis)
-    
-    # Pour l'instant, on accepte que le frontend renvoie les données
-    # (pas idéal pour la sécurité, mais OK pour MVP)
-    
-    # Récupérer depuis le request (à améliorer)
-    exercise_data = getattr(request, "_exercise_data", None)
-    
-    if not exercise_data:
-        raise HTTPException(
-            status_code=400,
-            detail="Exercise data missing. Please regenerate exercise."
-        )
+    # NOTE: Pour MVP, les données de l'exercice viennent du frontend
+    # TODO: Améliorer avec un cache serveur (Redis) en prod
     
     result = await agent_service.submit_answer(
         user_id=user_id,
         exercise_id=request.exercise_id,
         user_answer=request.user_answer,
-        question=exercise_data["question"],
-        correct_answer=exercise_data["correct_answer"],
-        exercise_type=exercise_data["exercise_type"],
-        difficulty=exercise_data["difficulty"],
+        question=request.question,
+        correct_answer=request.correct_answer,
+        exercise_type=request.exercise_type,
+        difficulty=request.difficulty,
         time_taken_ms=request.time_taken_ms,
-        tip_shown=exercise_data.get("tip")
+        tip_shown=request.tip
     )
     
     return result

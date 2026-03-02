@@ -11,12 +11,12 @@ app = FastAPI(
     version="2.0.0",  # Agent IA architecture
 )
 
+# CORS - permissif en développement
+origins = ["*"] if settings.env == "development" else [settings.frontend_url]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.frontend_url,
-        "http://localhost:3000",
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

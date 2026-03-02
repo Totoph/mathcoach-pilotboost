@@ -12,6 +12,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [agentState, setAgentState] = useState<any>(null);
   const [user, setUser] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function init() {
@@ -26,8 +27,9 @@ export default function DashboardPage() {
         // Initialiser l'agent
         const state = await api.initAgent();
         setAgentState(state);
-      } catch (err) {
-        console.error(err);
+      } catch (err: any) {
+        console.error("Dashboard init error:", err);
+        setError(err.message || "Une erreur s'est produite");
       } finally {
         setLoading(false);
       }
@@ -45,6 +47,23 @@ export default function DashboardPage() {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-800 text-white flex items-center justify-center">
         <div className="text-xl">Chargement...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-800 text-white flex items-center justify-center">
+        <div className="max-w-md bg-red-500/20 border border-red-500 rounded-2xl p-6">
+          <h2 className="text-xl font-bold mb-2">❌ Erreur</h2>
+          <p className="text-gray-200 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-red-500 rounded-lg hover:bg-red-600 transition"
+          >
+            Réessayer
+          </button>
+        </div>
       </div>
     );
   }

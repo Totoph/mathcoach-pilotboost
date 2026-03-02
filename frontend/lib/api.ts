@@ -64,7 +64,12 @@ export const api = {
         exercise_id: exerciseId,
         user_answer: userAnswer,
         time_taken_ms: timeTakenMs,
-        _exercise_data: exerciseData,
+        // Flatten exerciseData for backend validation
+        question: exerciseData.question,
+        correct_answer: exerciseData.correct_answer,
+        exercise_type: exerciseData.exercise_type,
+        difficulty: exerciseData.difficulty,
+        tip: exerciseData.tip || null,
       }),
     });
     

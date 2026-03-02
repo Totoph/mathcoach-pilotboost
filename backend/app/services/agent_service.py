@@ -5,7 +5,7 @@ import random
 from uuid import UUID, uuid4
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime, timedelta
-from app.core.supabase import get_supabase_client
+from app.core.supabase import get_supabase_admin
 from app.core.gemini import generate_agent_response, generate_feedback, generate_tip
 from app.schemas.agent import (
     AgentInstance, AgentState, ConversationMessage,
@@ -17,7 +17,7 @@ class AgentService:
     """Service de gestion de l'agent IA personnel"""
     
     def __init__(self):
-        self.supabase = get_supabase_client()
+        self.supabase = get_supabase_admin()
     
     async def get_or_create_instance(self, user_id: UUID) -> AgentInstance:
         """Récupère ou crée l'instance agent pour un utilisateur"""
