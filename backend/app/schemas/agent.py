@@ -84,12 +84,6 @@ class SubmitAnswerRequest(BaseModel):
     exercise_id: str  # Accept as string, convert to UUID in service
     user_answer: str
     time_taken_ms: Optional[int] = None
-    # Données de l'exercice (MVP : envoyées depuis le frontend)
-    question: str
-    correct_answer: str
-    exercise_type: str
-    difficulty: int
-    tip: Optional[str] = None
 
 
 class SubmitAnswerResponse(BaseModel):

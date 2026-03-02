@@ -3,6 +3,9 @@ Service Agent IA - Gestion de la progression adaptative et conversation
 """
 import random
 from uuid import UUID, uuid4
+
+# In-memory exercise cache (MVP - use Redis in prod)
+_exercise_cache: dict[str, dict] = {}
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime, timedelta
 from app.core.supabase import get_supabase_admin
@@ -94,6 +97,15 @@ class AgentService:
         # Créer l'exercice ID (sera utilisé pour submit)
         exercise_id = uuid4()
         
+        # Cache exercise data server-side (MVP)
+        _exercise_cache[str(exercise_id)] = {
+            "question": question,
+            "correct_answer": correct_answer,
+            "exercise_type": exercise_type,
+            "difficulty": difficulty,
+            "tip": tip,
+        }
+        
         return NextExerciseResponse(
             exercise_id=str(exercise_id),
             question=question,
@@ -109,15 +121,21 @@ class AgentService:
         user_id: UUID,
         exercise_id: UUID,
         user_answer: str,
-        question: str,
-        correct_answer: str,
-        exercise_type: str,
-        difficulty: int,
         time_taken_ms: Optional[int],
-        tip_shown: Optional[str]
     ) -> SubmitAnswerResponse:
         """Soumet une réponse et retourne le feedback de l'agent"""
         instance = await self.get_or_create_instance(user_id)
+        
+        # Retrieve exercise data from server-side cache
+        cached = _exercise_cache.pop(str(exercise_id), None)
+        if not cached:
+            raise ValueError(f"Exercise {exercise_id} not found in cache (expired or invalid)")
+        
+        question = cached["question"]
+        correct_answer = cached["correct_answer"]
+        exercise_type = cached["exercise_type"]
+        difficulty = cached["difficulty"]
+        tip_shown = cached.get("tip")
         
         # Vérifier la réponse
         is_correct = self._check_answer(user_answer, correct_answer)
@@ -250,6 +268,21 @@ class AgentService:
         state.total_exercises += 1
         state.last_difficulty = difficulty
         
+        # Compléter le diagnostic après 10 exercices
+        updates = {"state": state.dict()}
+        if not instance.diagnostic_completed and state.total_exercises >= 10:
+            updates["diagnostic_completed"] = True
+            updates["current_level"] = self._calculate_level(state)
+            instance.diagnostic_completed = True
+            instance.current_level = updates["current_level"]
+            
+            # Message de félicitation
+            await self._add_conversation(
+                instance.id, 
+                "agent",
+                f"🎯 Diagnostic terminé ! Ton niveau est {instance.current_level}/5. Je vais maintenant adapter les exercices pour te faire progresser. C'est parti ! 💪"
+            )
+        
         # Analyser forces/faiblesses
         if is_correct and difficulty >= 3:
             if exercise_type not in state.strengths:
@@ -262,9 +295,20 @@ class AgentService:
         
         # Mise à jour DB
         self.supabase.table("agent_instances")\
-            .update({"state": state.dict()})\
+            .update(updates)\
             .eq("id", str(instance.id))\
             .execute()
+    
+    def _calculate_level(self, state: AgentState) -> int:
+        """Calcule le niveau basé sur les performances du diagnostic"""
+        if state.last_difficulty >= 3 and not state.weaknesses:
+            return 4
+        elif state.last_difficulty >= 2 and len(state.weaknesses) <= 1:
+            return 3
+        elif len(state.weaknesses) <= 2:
+            return 2
+        else:
+            return 1
     
     def _select_exercise_params(
         self, instance: AgentInstance, recent_perf: List[dict]

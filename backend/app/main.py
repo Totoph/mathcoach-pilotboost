@@ -1,8 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from app.core.config import get_settings
 from app.api.routes import auth, exercises, users, agent
+import logging
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 app = FastAPI(
@@ -10,6 +14,17 @@ app = FastAPI(
     description="AI-powered mental math training for competitive exam preparation",
     version="2.0.0",  # Agent IA architecture
 )
+
+# Global exception handler for validation errors
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation error on {request.url}")
+    logger.error(f"Request body: {await request.body()}")
+    logger.error(f"Validation errors: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
 
 # CORS - permissif en développement
 origins = ["*"] if settings.env == "development" else [settings.frontend_url]

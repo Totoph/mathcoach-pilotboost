@@ -54,7 +54,6 @@ export const api = {
     exerciseId: string,
     userAnswer: string,
     timeTakenMs: number | null,
-    exerciseData: any
   ) {
     const headers = await getAuthHeaders();
     const res = await fetch(`${API_URL}/api/v1/agent/submit-answer`, {
@@ -64,12 +63,6 @@ export const api = {
         exercise_id: exerciseId,
         user_answer: userAnswer,
         time_taken_ms: timeTakenMs,
-        // Flatten exerciseData for backend validation
-        question: exerciseData.question,
-        correct_answer: exerciseData.correct_answer,
-        exercise_type: exerciseData.exercise_type,
-        difficulty: exerciseData.difficulty,
-        tip: exerciseData.tip || null,
       }),
     });
     

@@ -105,21 +105,17 @@ async def submit_answer(
     Soumet une réponse et récupère le feedback de l'agent.
     L'agent met à jour son état et adapte la progression.
     """
-    user_id = UUID(current_user["id"])
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Submit request: {request.model_dump()}")
     
-    # NOTE: Pour MVP, les données de l'exercice viennent du frontend
-    # TODO: Améliorer avec un cache serveur (Redis) en prod
+    user_id = UUID(current_user["id"])
     
     result = await agent_service.submit_answer(
         user_id=user_id,
         exercise_id=UUID(request.exercise_id),
         user_answer=request.user_answer,
-        question=request.question,
-        correct_answer=request.correct_answer,
-        exercise_type=request.exercise_type,
-        difficulty=request.difficulty,
         time_taken_ms=request.time_taken_ms,
-        tip_shown=request.tip
     )
     
     return result

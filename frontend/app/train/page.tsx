@@ -34,6 +34,9 @@ export default function TrainPage() {
   const [exerciseStartTime, setExerciseStartTime] = useState(Date.now());
   const [showResult, setShowResult] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
+  const [agentState, setAgentState] = useState<any>(null);
+  const [totalExercises, setTotalExercises] = useState(0);
+  const [diagnosticCompleted, setDiagnosticCompleted] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -41,6 +44,16 @@ export default function TrainPage() {
       if (!user) {
         router.push("/auth/login");
         return;
+      }
+
+      // Charger l'état de l'agent
+      try {
+        const state = await api.getAgentState();
+        setAgentState(state.instance);
+        setTotalExercises(state.instance.state.total_exercises || 0);
+        setDiagnosticCompleted(state.instance.diagnostic_completed);
+      } catch (err) {
+        console.error("Failed to load agent state:", err);
       }
 
       // Charger l'historique de conversation
@@ -92,13 +105,6 @@ export default function TrainPage() {
         currentExercise.exercise_id,
         userInput,
         timeTaken,
-        {
-          question: currentExercise.question,
-          correct_answer: currentExercise.correct_answer,
-          exercise_type: currentExercise.exercise_type,
-          difficulty: currentExercise.difficulty,
-          tip: currentExercise.tip,
-        }
       );
 
       // Ajouter le feedback de l'agent
@@ -106,6 +112,21 @@ export default function TrainPage() {
 
       setLastResult(result);
       setShowResult(true);
+      
+      // Incrémenter le compteur et recharger l'état si diagnostic terminé
+      const newTotal = totalExercises + 1;
+      setTotalExercises(newTotal);
+      
+      if (!diagnosticCompleted && newTotal >= 10) {
+        setDiagnosticCompleted(true);
+        // Recharger l'état complet pour avoir le niveau
+        try {
+          const state = await api.getAgentState();
+          setAgentState(state.instance);
+        } catch (err) {
+          console.error("Failed to reload agent state:", err);
+        }
+      }
 
       // Auto-charger le prochain exercice après 2s
       setTimeout(() => {
@@ -174,10 +195,27 @@ export default function TrainPage() {
           <span>Quitter</span>
         </button>
 
-        <div className="text-xl font-bold">MathCoach</div>
+        <div className="flex flex-col items-center">
+          <div className="text-xl font-bold">MathCoach</div>
+          {!diagnosticCompleted ? (
+            <div className="flex items-center gap-2 text-sm text-gray-400 mt-1">
+              <span>Diagnostic : {totalExercises}/10</span>
+              <div className="w-20 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-primary transition-all duration-300"
+                  style={{ width: `${(totalExercises / 10) * 100}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-gray-400 mt-1">
+              Niveau {agentState?.current_level}/5 · {totalExercises} exercices
+            </div>
+          )}
+        </div>
 
         <div className="text-sm text-gray-400">
-          Session : {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")}
+          {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")}
         </div>
       </header>
 
