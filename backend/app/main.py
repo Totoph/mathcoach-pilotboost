@@ -1,14 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
-from app.api.routes import auth, exercises, users
+from app.api.routes import auth, exercises, users, agent
 
 settings = get_settings()
 
 app = FastAPI(
     title="MathCoach by PilotBoost",
     description="AI-powered mental math training for competitive exam preparation",
-    version="1.0.0",
+    version="2.0.0",  # Agent IA architecture
 )
 
 app.add_middleware(
@@ -25,6 +25,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(exercises.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
+app.include_router(agent.router, prefix="/api/v1")  # ← Agent IA routes
 
 
 @app.get("/")
