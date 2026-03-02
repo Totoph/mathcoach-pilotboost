@@ -87,42 +87,57 @@
 
 ---
 
-## 3. Test de 1 minute (Diagnostic rapide)
+## 3. Test Diagnostic (20 questions — même interface que exercices)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  [Logo MathCoach]                                           │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│              ⏱️  Test de diagnostic (1 min)                 │
-│                                                             │
-│         Répondez rapidement pour évaluer votre niveau       │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │                                                     │   │
-│  │               12 + 47 = ?                          │   │
-│  │                                                     │   │
-│  │              [___________]                          │   │
-│  │                                                     │   │
-│  │              [Valider →]                            │   │
-│  │                                                     │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-│  Question 3/5                           ⏱️  00:42 restant   │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+│  [Logo MathCoach]     Diagnostic 3/20        ⏱️  01:23     │
+├───────────────────────────────────────────────┬─────────────┤
+│                                               │             │
+│                                               │  💬 Chat    │
+│                                               │   (désactivé│
+│              12 + 47 = ?                      │    pendant  │
+│                                               │    diagnostic)│
+│       ┌─────────────────────┐                │             │
+│       │                     │                │             │
+│       │    [Input field]    │                │             │
+│       │                     │                │             │
+│       └─────────────────────┘                │             │
+│                                               │             │
+│       ┌─────────────────────┐                │             │
+│       │  7   8   9    ←     │                │             │
+│       │  4   5   6    ✓     │                │             │
+│       │  1   2   3    ✗     │                │             │
+│       │     0       Enter   │                │             │
+│       └─────────────────────┘                │             │
+│           Pavé numérique                      │             │
+│                                               │             │
+│  ███░░░░░░░░░░░░░░░░░ (Progress bar)         │             │
+│                                               │             │
+└───────────────────────────────────────────────┴─────────────┘
 ```
 
+**Différences avec exercices normaux :**
+- **20 questions** pour évaluer le niveau initial
+- **Pas de feedback immédiat** (pas de ✅/❌ entre les questions)
+- **Chat bar désactivée** (pas de tips pendant le diagnostic)
+- **Pas de temps limite strict** (mais timer affiché pour info)
+- Progress bar : 20 étapes
+
 **Flow :**
-- 5 questions rapides (additions, multiplications simples)
-- Timer de 1 min
-- Pas de feedback immédiat (mode rapide)
-- À la fin → calcul du niveau initial
-- → Redirect vers Signup
+1. User répond aux 20 questions avec le pavé numérique
+2. Chaque réponse est stockée (mais pas de feedback)
+3. À la fin → calcul du niveau initial basé sur :
+   - Précision (nombre de bonnes réponses)
+   - Temps moyen par question
+   - Types d'erreurs
+4. → Redirect vers Signup
 
 **Backend :**
-- API `/exercises/diagnostic` (POST array de réponses)
-- Retourne `initial_level: 3` (par exemple sur 10)
+- API `/exercises/diagnostic/next` (GET) → génère la prochaine question
+- API `/exercises/diagnostic/submit` (POST) → stocke réponse sans feedback
+- API `/exercises/diagnostic/complete` (POST) → calcule niveau initial
+- Retourne `initial_level: 3` (sur 10) + profil d'erreurs
 
 ---
 
@@ -199,6 +214,10 @@
 
 ## 6. Screen Exercice (Pavé numérique + Chat bar)
 
+**⚠️ Même interface pour :**
+- **Diagnostic initial** (20 questions, pas de feedback, chat désactivé)
+- **Exercices normaux** (feedback immédiat, tips adaptatifs, chat actif)
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  [Avatar]     Exercice 3/15        ⏱️  00:23  [Dashboard] │
@@ -229,14 +248,25 @@
 ```
 
 **Layout :**
-- **Haut gauche** : Avatar utilisateur (cliquable → popup profil)
-- **Centre haut** : "Exercice 3/15"
+- **Haut gauche** : Avatar utilisateur (cliquable → popup profil) *ou Logo si diagnostic*
+- **Centre haut** : "Exercice 3/15" *ou "Diagnostic 3/20"*
 - **Haut droite** : Timer + bouton Dashboard
 - **Centre** : Question + input + pavé numérique
 - **Progress bar** en bas
 - **Droite** : Chat bar (sidebar fixe)
 
-**Chat bar (sidebar droite) :**
+**Différence Diagnostic vs Exercices :**
+
+| Élément | Diagnostic (20Q) | Exercices normaux |
+|---------|------------------|-------------------|
+| **Feedback** | ❌ Pas de feedback immédiat | ✅ Feedback après chaque réponse |
+| **Chat bar** | 🚫 Désactivée | ✅ Active (tips adaptatifs) |
+| **Avatar** | Logo MathCoach | Avatar user |
+| **Dashboard** | 🚫 Bouton caché | ✅ Accessible |
+| **Tips** | ❌ Pas de tips | ✅ Tips si difficulté détectée |
+| **Progress** | 20 étapes | 15 étapes (par session) |
+
+**Chat bar (sidebar droite) — Mode Exercices uniquement :**
 - Toujours visible
 - Par défaut : icône 💬 minimaliste
 - Tips cachés par défaut
@@ -246,12 +276,18 @@
 **Pavé numérique :**
 - Boutons 0-9 + Enter + ← (delete) + ✓ (validate) + ✗ (clear)
 - Clavier physique aussi accepté
+- Identique pour diagnostic et exercices
 
-**Actions :**
+**Actions (Mode Exercices) :**
 - Enter ou ✓ → Submit answer → API `/exercises/submit`
 - Feedback immédiat (correct ✅ ou incorrect ❌)
 - Si incorrect → affiche tip adaptatif dans la chat bar
 - Fin des 15 exercices → Résumé + retour Dashboard
+
+**Actions (Mode Diagnostic) :**
+- Enter ou ✓ → Submit answer → API `/exercises/diagnostic/submit`
+- Pas de feedback (passe directement à la question suivante)
+- Fin des 20 questions → Calcul niveau + Redirect Signup
 
 ---
 
@@ -333,10 +369,10 @@
 
 1. **Landing** → Clic "Commencer l'entrainement"
 2. **Onboarding** → Chat bar : "Pourquoi tu veux utiliser MathCoach ?"
-3. **Test 1 min** → 5 questions rapides pour évaluer le niveau
+3. **Test diagnostic** → 20 questions avec pavé numérique (pas de feedback immédiat, chat désactivé)
 4. **Signup** → Email + password
 5. **Dashboard initial** → Chat bar : "Que veux-tu faire ?" → User répond "s'entrainer"
-6. **Exercices** → Pavé numérique + chat bar sidebar (tips cachés)
+6. **Exercices** → Pavé numérique + chat bar sidebar (tips cachés, feedback immédiat)
 7. **Profil popup** → Clic avatar → stats rapides + actions
 8. **Dashboard popup** → Bouton dashboard → vue stats rapides
 
