@@ -45,7 +45,7 @@ from app.schemas.agent import (
     AgentInstance, AgentState, ConversationMessage,
     NextExerciseResponse, SubmitAnswerResponse,
     SkillScore, SkillVectorResponse, DashboardResponse,
-    SkillSnapshotResponse,
+    SkillSnapshotResponse, DailyTimeEntry,
 )
 
 logger = logging.getLogger(__name__)
@@ -435,6 +435,11 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
         # Get history for graph
         history = await self._get_skill_history(user_id)
 
+        # Get daily time data
+        daily_time_data, total_time_ms, avg_time_ms = await self._get_daily_time_data(
+            instance.id, days=90
+        )
+
         # Generate agent message
         agent_msg = self._generate_dashboard_message(profile)
 
@@ -445,6 +450,9 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
             total_exercises=profile.total_exercises,
             total_correct=profile.total_correct,
             accuracy=round(accuracy, 1),
+            avg_time_ms=round(avg_time_ms, 0),
+            total_time_ms=total_time_ms,
+            daily_time_data=daily_time_data,
             skills=skills,
             strengths=profile.strengths,
             weaknesses=profile.weaknesses,
@@ -456,16 +464,16 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
         )
 
     async def _get_skill_history(self, user_id: UUID) -> List[SkillSnapshotResponse]:
-        """Get last 30 days of skill snapshots."""
+        """Get all skill snapshots (up to 365 days) for the progress graphs."""
         try:
-            thirty_days_ago = (
-                datetime.now(timezone.utc) - timedelta(days=30)
+            one_year_ago = (
+                datetime.now(timezone.utc) - timedelta(days=365)
             ).strftime("%Y-%m-%d")
 
             result = self.supabase.table("skill_snapshots")\
                 .select("*")\
                 .eq("user_id", str(user_id))\
-                .gte("snapshot_date", thirty_days_ago)\
+                .gte("snapshot_date", one_year_ago)\
                 .order("snapshot_date")\
                 .execute()
 
@@ -474,12 +482,58 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
                     date=s["snapshot_date"],
                     global_level=s["global_level"],
                     skill_scores=s.get("skill_vector", {}),
+                    total_exercises=s.get("total_exercises", 0),
                 )
                 for s in result.data
             ]
         except Exception as e:
             logger.warning(f"Failed to get skill history: {e}")
             return []
+
+    async def _get_daily_time_data(
+        self, agent_instance_id: UUID, days: int = 90
+    ) -> Tuple[List[DailyTimeEntry], int, float]:
+        """Get daily aggregated time from exercise_performances.
+
+        Returns (daily_entries, total_time_ms, avg_time_ms).
+        """
+        try:
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(days=days)
+            ).isoformat()
+
+            result = self.supabase.table("exercise_performances")\
+                .select("time_taken_ms, created_at")\
+                .eq("agent_instance_id", str(agent_instance_id))\
+                .gte("created_at", cutoff)\
+                .order("created_at")\
+                .execute()
+
+            from collections import defaultdict
+            daily: dict[str, dict] = defaultdict(lambda: {"time_ms": 0, "exercises": 0})
+            total_time = 0
+            count = 0
+
+            for row in result.data:
+                t = row.get("time_taken_ms") or 0
+                # created_at may be ISO string with T separator
+                date_str = (row.get("created_at", "") or "")[:10]
+                if not date_str:
+                    continue
+                daily[date_str]["time_ms"] += t
+                daily[date_str]["exercises"] += 1
+                total_time += t
+                count += 1
+
+            entries = [
+                DailyTimeEntry(date=d, time_ms=v["time_ms"], exercises=v["exercises"])
+                for d, v in sorted(daily.items())
+            ]
+            avg_time = total_time / count if count > 0 else 0
+            return entries, total_time, avg_time
+        except Exception as e:
+            logger.warning(f"Failed to get daily time data: {e}")
+            return [], 0, 0.0
 
     # ══════════════════════════════════════════
     #            INTERNAL METHODS

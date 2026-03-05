@@ -343,40 +343,6 @@ def _gen_fast_multiplication(difficulty: int, sub_skill: Optional[str] = None) -
     )
 
 
-def _gen_estimation(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExercise:
-    """Estimation exercises — round and compute."""
-    if difficulty <= 2:
-        a = random.randint(10, 99)
-        b = random.randint(10, 99)
-        op = random.choice(["+", "−", "×"])
-    else:
-        a = random.randint(100, 999)
-        b = random.randint(100, 999)
-        op = random.choice(["+", "−", "×"])
-
-    if op == "+":
-        exact = a + b
-    elif op == "−":
-        if a < b: a, b = b, a
-        exact = a - b
-    else:
-        exact = a * b
-
-    # Accept answers within 10% of exact
-    question = f"≈ {a} {op} {b}"
-    answer = str(round(exact, -1) if exact >= 100 else exact)  # Rounded to nearest 10
-    
-    tip = f"Arrondi: {a} ≈ {round(a, -1)}, {b} ≈ {round(b, -1)}"
-
-    return GeneratedExercise(
-        exercise_id=str(uuid4()), skill="estimation",
-        sub_skill=sub_skill or "round_estimate",
-        question=question, correct_answer=str(exact), difficulty=difficulty,
-        time_limit_ms=TIME_LIMITS[difficulty], tip=tip,
-        hint=f"Réponse exacte acceptée, ±10% toléré",
-    )
-
-
 def _gen_mixed(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExercise:
     """Mixed operations — combine 2 operations."""
     ops = ["+", "−", "×", "÷"]
@@ -442,26 +408,45 @@ def _gen_chain(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExe
         steps = random.randint(3, 5)
         sub = "chain_4plus"
 
-    # Build chain
-    result = random.randint(2, 20)
-    parts = [str(result)]
-    
-    for _ in range(steps):
-        op = random.choice(["+", "−", "×"])
-        if op == "×":
-            n = random.randint(2, 5)
-            result = result * n
-        elif op == "+":
-            n = random.randint(1, 30)
-            result = result + n
-        else:
-            n = random.randint(1, min(result - 1, 20)) if result > 1 else 1
-            result = result - n
-        parts.append(f"{op} {n}")
+    # Build chain — retry until eval result is strictly positive (avoids user confusion
+    # with negative answers that require the ± toggle)
+    eval_result = 0
+    question = ""
+    for _attempt in range(60):
+        result = random.randint(2, 20)
+        parts = [str(result)]
 
-    question = " ".join(parts)
-    answer = str(result)
-    tip = "Calcule étape par étape, de gauche à droite."
+        for _ in range(steps):
+            op = random.choice(["+", "−", "×"])
+            if op == "×":
+                n = random.randint(2, 5)
+                result = result * n
+            elif op == "+":
+                n = random.randint(1, 30)
+                result = result + n
+            else:
+                n = random.randint(1, min(result - 1, 20)) if result > 1 else 1
+                result = result - n
+            parts.append(f"{op} {n}")
+
+        question = " ".join(parts)
+        try:
+            eval_expr = question.replace("×", "*").replace("−", "-")
+            eval_result = int(eval(eval_expr))
+        except Exception:
+            continue
+        if eval_result > 0:
+            break
+
+    answer = str(eval_result)
+
+    # Choose the appropriate tip depending on whether the chain mixes priorities
+    has_mult = "×" in question
+    has_add_sub = ("+" in question or "−" in question)
+    if has_mult and has_add_sub:
+        tip = "Respecte l'ordre des opérations : calcule les × en premier, puis + et −."
+    else:
+        tip = "Calcule étape par étape, de gauche à droite."
 
     return GeneratedExercise(
         exercise_id=str(uuid4()), skill="chain", sub_skill=sub_skill or sub,
@@ -536,7 +521,6 @@ GENERATORS = {
     "squares_1_30": _gen_squares,
     "decomposition": _gen_decomposition,
     "fast_multiplication": _gen_fast_multiplication,
-    "estimation": _gen_estimation,
     "mixed": _gen_mixed,
     "chain": _gen_chain,
     "advanced": _gen_advanced,
@@ -613,17 +597,26 @@ def _parse_expression_pattern(example: str) -> dict:
 
 
 def generate_from_example(example: str, count: int = 10) -> list[GeneratedExercise]:
-    """Generate `count` exercises structurally similar to the given example expression."""
+    """Generate `count` exercises inspired by the given example expression.
+
+    For add/sub chains the number of terms and operator arrangement are varied on
+    each exercise so the series never feels repetitive.
+    """
     pattern = _parse_expression_pattern(example)
     ops = pattern["operators"]
     ranges = pattern["operand_ranges"]
-    num_terms = pattern["num_terms"]
-    
+
     # Map operators back to display form
     OP_DISPLAY = {"+": "+", "-": "−", "*": "×", "/": "÷"}
-    
-    # Determine skill name from operators
+
+    # Categorise operators present in the example
     unique_ops = set(ops)
+    has_add_sub = bool(unique_ops & {"+", "-"})
+    has_mul = bool(unique_ops & {"*"})
+    has_div = bool(unique_ops & {"/"})
+    only_add_sub = has_add_sub and not has_mul and not has_div
+
+    # Determine skill label
     if unique_ops <= {"+"}:
         skill = "addition"
     elif unique_ops <= {"-"}:
@@ -636,55 +629,76 @@ def generate_from_example(example: str, count: int = 10) -> list[GeneratedExerci
         skill = "chain"
     else:
         skill = "mixed"
-    
+
+    # Derive a single magnitude range that covers all operands in the example
+    base_lo = min(lo for lo, hi in ranges)
+    base_hi = max(hi for lo, hi in ranges)
+
     exercises = []
     seen = set()
     attempts = 0
-    
-    while len(exercises) < count and attempts < count * 20:
+
+    while len(exercises) < count and attempts < count * 30:
         attempts += 1
-        
-        # Generate random operands respecting the ranges
-        nums = []
-        for lo, hi in ranges:
-            nums.append(random.randint(lo, hi))
-        
-        # For division, ensure clean division
-        for i, op in enumerate(ops):
+
+        if only_add_sub:
+            # Vary the number of operators: ±1 from the example, up to +2 extra
+            n_ops = random.randint(max(1, len(ops) - 1), len(ops) + 2)
+            # Randomly assign + or − to each position
+            gen_ops = [random.choice(["+", "-"]) for _ in range(n_ops)]
+        else:
+            # Keep the same non-additive operators but shuffle the +/− positions
+            gen_ops = list(ops)  # copy
+            add_sub_positions = [i for i, op in enumerate(gen_ops) if op in {"+", "-"}]
+            for pos in add_sub_positions:
+                gen_ops[pos] = random.choice(["+", "-"])
+
+        n_terms = len(gen_ops) + 1
+
+        # Generate operands within the example's magnitude range
+        nums = [random.randint(base_lo, base_hi) for _ in range(n_terms)]
+
+        # Ensure clean integer division
+        for i, op in enumerate(gen_ops):
             if op == "/":
-                # Make nums[i] a multiple of nums[i+1]
-                if i + 1 < len(nums) and nums[i + 1] != 0:
+                if i + 1 < n_terms and nums[i + 1] != 0:
                     multiplier = random.randint(2, max(2, nums[i] // max(1, nums[i + 1])))
                     nums[i] = nums[i + 1] * multiplier
-        
+
         # Build the question string
         parts = [str(nums[0])]
-        for i, op in enumerate(ops):
-            if i + 1 < len(nums):
+        for i, op in enumerate(gen_ops):
+            if i + 1 < n_terms:
                 parts.append(OP_DISPLAY.get(op, op))
                 parts.append(str(nums[i + 1]))
         question = " ".join(parts)
-        
-        # Compute the answer
+
+        # Compute answer respecting standard operator precedence
         try:
             eval_expr = question.replace("×", "*").replace("÷", "/").replace("−", "-")
             result = eval(eval_expr)
             if result != int(result):
                 continue  # skip non-integer results
-            answer = str(int(result))
-        except:
+            result_int = int(result)
+        except Exception:
             continue
-        
-        # Skip duplicates
+
+        # Skip negative results to avoid requiring the ± toggle
+        if result_int < 0:
+            continue
+
+        answer = str(result_int)
+
         if question in seen:
             continue
         seen.add(question)
-        
-        # Estimate difficulty from number of terms and operand sizes
+
+        # Estimate difficulty
         max_num = max(abs(n) for n in nums)
-        if max_num <= 20 and num_terms <= 3:
+        n_ops_used = len(gen_ops)
+        if max_num <= 20 and n_ops_used <= 2:
             difficulty = 1
-        elif max_num <= 100 and num_terms <= 3:
+        elif max_num <= 100 and n_ops_used <= 2:
             difficulty = 2
         elif max_num <= 100:
             difficulty = 3
@@ -692,7 +706,15 @@ def generate_from_example(example: str, count: int = 10) -> list[GeneratedExerci
             difficulty = 4
         else:
             difficulty = 5
-        
+
+        # Choose tip based on operator mix
+        has_mult_in_q = "×" in question
+        has_add_sub_in_q = ("+" in question or "−" in question)
+        if has_mult_in_q and has_add_sub_in_q:
+            tip = "Respecte l'ordre des opérations : calcule les × en premier, puis + et −."
+        else:
+            tip = "Calcule étape par étape, de gauche à droite."
+
         exercises.append(GeneratedExercise(
             exercise_id=str(uuid4()),
             skill=skill,
@@ -700,10 +722,10 @@ def generate_from_example(example: str, count: int = 10) -> list[GeneratedExerci
             question=question,
             correct_answer=answer,
             difficulty=difficulty,
-            time_limit_ms=TIME_LIMITS.get(difficulty, 15000) + 3000 * max(0, num_terms - 2),
-            tip="Calcule étape par étape, de gauche à droite.",
+            time_limit_ms=TIME_LIMITS.get(difficulty, 15000) + 3000 * max(0, n_ops_used - 2),
+            tip=tip,
         ))
-    
+
     return exercises
 
 
@@ -906,11 +928,6 @@ TECHNIQUE_TIPS = {
         "💯 ×25 : ÷4 puis ×100",
         "🎯 ×50 : ÷2 puis ×100",
         "🔄 ×99 : ×100 − le nombre",
-    ],
-    "estimation": [
-        "🎯 Arrondi au nombre pratique le plus proche",
-        "📏 Pour la multiplication, arrondi un vers le haut et l'autre vers le bas",
-        "⚡ L'ordre de grandeur suffit souvent",
     ],
     "mixed": [
         "📐 Priorité des opérations : × et ÷ avant + et −",

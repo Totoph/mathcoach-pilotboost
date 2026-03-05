@@ -79,6 +79,9 @@ export default function TrainPage() {
   const [skillScoresBefore, setSkillScoresBefore] = useState<Record<string, number>>({});
   const [skillScoresAfter, setSkillScoresAfter] = useState<Record<string, number>>({});
 
+  // User weaknesses (from dashboard)
+  const [userWeaknesses, setUserWeaknesses] = useState<{ name: string; label: string; score: number }[]>([]);
+
   // Custom series from example expression
   const [customSeriesPool, setCustomSeriesPool] = useState<NextExercise[]>([]);
   const [customSeriesExample, setCustomSeriesExample] = useState<string | null>(null);
@@ -92,6 +95,10 @@ export default function TrainPage() {
 
   // Voice mode
   const [voiceMode, setVoiceMode] = useState(false);
+
+  // Speed mode (QCM): 4 shuffled answer choices
+  const [speedChoices, setSpeedChoices] = useState<string[]>([]);
+  const [speedPicked, setSpeedPicked] = useState<string | null>(null);
 
   // Ref to avoid stale closure in auto-submit effect
   const exerciseRef = useRef<NextExercise | null>(null);
@@ -139,6 +146,11 @@ export default function TrainPage() {
     async function init() {
       const user = await getUser();
       if (!user) { router.push("/auth/login"); return; }
+
+      // Read mode from URL immediately so loadNextExercise has it
+      const urlMode = searchParams.get("mode");
+      if (urlMode) setTrainingMode(urlMode);
+
       try {
         const state = await api.getAgentState();
         setTotalExercises(state.instance.state.total_exercises || 0);
@@ -150,8 +162,15 @@ export default function TrainPage() {
         const before: Record<string, number> = {};
         dash.skills.forEach((s) => { before[s.name] = s.score; });
         setSkillScoresBefore(before);
+        // Store weaknesses for targeted training
+        const weakSkills = dash.skills
+          .filter((s) => s.score > 0 && s.score < 40 && s.attempts > 3)
+          .sort((a, b) => a.score - b.score)
+          .slice(0, 3)
+          .map((s) => ({ name: s.name, label: s.label, score: Math.round(s.score) }));
+        setUserWeaknesses(weakSkills);
       } catch {}
-      await loadNextExercise();
+      await loadNextExercise({ mode: urlMode || undefined });
       setLoading(false);
     }
     init();
@@ -186,6 +205,29 @@ export default function TrainPage() {
       setIsNegative(false);
       setCorrectDisplay("");
       setAnswerState("idle");
+      setSpeedPicked(null);
+
+      // Generate speed-mode choices if needed
+      const effectiveMode = overrides?.mode ?? trainingMode;
+      if (effectiveMode === "speed" && exercise.correct_answer) {
+        const correct = parseInt(exercise.correct_answer, 10);
+        const wrongSet = new Set<number>();
+        while (wrongSet.size < 3) {
+          // Generate plausible wrong answers near the correct one
+          const offset = Math.floor(Math.random() * Math.max(10, Math.abs(correct) * 0.3)) + 1;
+          const sign = Math.random() < 0.5 ? 1 : -1;
+          const wrong = correct + offset * sign;
+          if (wrong !== correct) wrongSet.add(wrong);
+        }
+        const allChoices = [exercise.correct_answer, ...Array.from(wrongSet).map(String)];
+        // Shuffle
+        for (let i = allChoices.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [allChoices[i], allChoices[j]] = [allChoices[j], allChoices[i]];
+        }
+        setSpeedChoices(allChoices);
+      }
+
       setTimeout(() => inputRef.current?.focus(), 50);
     } catch (err) {
       console.error("Failed to load exercise:", err);
@@ -198,6 +240,7 @@ export default function TrainPage() {
 
   // ─── Auto-submit on input change (instant, no debounce) ───
   useEffect(() => {
+    if (trainingMode === "speed") return; // Speed mode uses choice buttons
     if (!userInput.trim() || isSubmitting || showPause || answerState === "correct") return;
     // Quick client-side check: only call submit if answer could match
     const exercise = exerciseRef.current;
@@ -243,7 +286,7 @@ export default function TrainPage() {
       if (newIdx >= SERIES_SIZE) {
         setTimeout(() => setShowPause(true), 400);
       } else {
-        loadNextExercise();
+        setTimeout(() => loadNextExercise(), 350);
       }
 
       // Fire-and-forget: send to backend for stats/profile update
@@ -292,8 +335,8 @@ export default function TrainPage() {
         if (newIdx >= SERIES_SIZE) {
           setTimeout(() => setShowPause(true), 400);
         } else {
-          // Load next exercise immediately — it will reset everything atomically
-          loadNextExercise();
+          // Delay slightly so the green correct state is visible before the next question loads
+          setTimeout(() => loadNextExercise(), 350);
         }
       }
       // Wrong answer: do nothing — user keeps trying
@@ -303,6 +346,84 @@ export default function TrainPage() {
       }
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  // ─── Speed mode: handle choice selection ───
+  function handleSpeedChoice(choice: string) {
+    const exercise = exerciseRef.current;
+    if (!exercise || answerState === "correct" || speedPicked !== null) return;
+
+    const timeTaken = Date.now() - exerciseStartTime;
+    const isCorrect = choice === exercise.correct_answer;
+
+    setSpeedPicked(choice);
+
+    if (isCorrect) {
+      setCorrectDisplay(choice);
+      setAnswerState("correct");
+      setTotalExercises((prev) => prev + 1);
+
+      const sr: SeriesResult = {
+        question: exercise.question,
+        correct_answer: exercise.correct_answer || choice,
+        user_answer: choice,
+        is_correct: true,
+        time_ms: timeTaken,
+        error_type: null,
+        technique_tip: null,
+        skill_name: exercise.exercise_type,
+      };
+      const newResults = [...seriesResults, sr];
+      setSeriesResults(newResults);
+      const newIdx = seriesIndex + 1;
+      setSeriesIndex(newIdx);
+
+      if (newIdx >= SERIES_SIZE) {
+        setTimeout(() => setShowPause(true), 400);
+      } else {
+        setTimeout(() => loadNextExercise(), 500);
+      }
+
+      // Fire-and-forget backend
+      api.submitAnswer(exercise.exercise_id, choice, timeTaken)
+        .then((result) => {
+          if (result.global_level) setGlobalLevel(result.global_level);
+          if (result.skill_name && result.skill_score != null) {
+            setSkillScoresAfter(prev => ({ ...prev, [result.skill_name!]: result.skill_score! }));
+          }
+        })
+        .catch(() => {});
+    } else {
+      // Wrong — record the mistake and move on after a short delay
+      const sr: SeriesResult = {
+        question: exercise.question,
+        correct_answer: exercise.correct_answer || "?",
+        user_answer: choice,
+        is_correct: false,
+        time_ms: timeTaken,
+        error_type: "wrong_choice",
+        technique_tip: null,
+        skill_name: exercise.exercise_type,
+      };
+      const newResults = [...seriesResults, sr];
+      setSeriesResults(newResults);
+      const newIdx = seriesIndex + 1;
+      setSeriesIndex(newIdx);
+      setTotalExercises((prev) => prev + 1);
+
+      // Show the correct answer briefly, then move on
+      setCorrectDisplay(exercise.correct_answer || "?");
+      setTimeout(() => {
+        setAnswerState("idle");
+        if (newIdx >= SERIES_SIZE) {
+          setShowPause(true);
+        } else {
+          loadNextExercise();
+        }
+      }, 800);
+
+      api.submitAnswer(exercise.exercise_id, choice, timeTaken).catch(() => {});
     }
   }
 
@@ -464,6 +585,13 @@ export default function TrainPage() {
     { label: "Divisions", text: "Divisions niveau moyen" },
   ];
 
+  const COMMON_QUESTIONS = [
+    { label: "Comment multiplier par 11 ?", text: "Comment multiplier par 11 rapidement ?" },
+    { label: "Astuce pour les carrés", text: "Quelle est l'astuce pour calculer les carrés ?" },
+    { label: "Diviser par 5 facilement", text: "Comment diviser par 5 facilement ?" },
+    { label: "C'est quoi la décomposition ?", text: "Explique moi la technique de décomposition" },
+  ];
+
   // ── Local keyword matcher: resolves 90% of requests without LLM ──
   function matchLocalIntent(msg: string): { skill: string; difficulty: number; description: string } | null {
     const m = msg.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -485,8 +613,6 @@ export default function TrainPage() {
     if (/mixte|melange|mix/.test(m)) return { skill: "mixed", difficulty: 2, description: "Opérations mixtes" };
     // Advanced
     if (/avance|vedique|croise/.test(m)) return { skill: "advanced", difficulty: 3, description: "Techniques avancées" };
-    // Estimation
-    if (/estim|arrondi/.test(m)) return { skill: "estimation", difficulty: 2, description: "Estimations" };
     // Decomposition
     if (/decompos|factori/.test(m)) return { skill: "decomposition", difficulty: 2, description: "Décompositions" };
     // Fast mult (×5, ×9, ×11, etc.)
@@ -517,7 +643,41 @@ export default function TrainPage() {
     setIsNegative(false);
     setCorrectDisplay("");
     setAnswerState("idle");
+    setSpeedPicked(null);
     setTimeout(() => inputRef.current?.focus(), 50);
+  }
+
+  // Launch targeted weakness training: mix exercises from weakest skills
+  async function handleWeaknessTraining() {
+    if (userWeaknesses.length === 0) return;
+    setMessages((prev) => [
+      ...prev,
+      { role: "agent", message: `🎯 Série ciblée sur tes faiblesses : ${userWeaknesses.map(w => w.label).join(", ")}. C'est parti !`, timestamp: Date.now() },
+    ]);
+    try {
+      // Generate exercises from each weakness, then interleave
+      const perSkill = Math.ceil(SERIES_SIZE / userWeaknesses.length);
+      const allExercises: NextExercise[] = [];
+      for (const w of userWeaknesses) {
+        const difficulty = Math.max(1, Math.min(3, Math.round(w.score / 20))); // low score → low difficulty
+        const res = await api.generateSkillSeries(w.name, difficulty, perSkill);
+        allExercises.push(...res.exercises);
+      }
+      // Shuffle
+      for (let i = allExercises.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [allExercises[i], allExercises[j]] = [allExercises[j], allExercises[i]];
+      }
+      const finalList = allExercises.slice(0, SERIES_SIZE);
+      if (finalList.length > 0) {
+        launchCustomSeries(finalList, "Faiblesses ciblées");
+      }
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: "agent", message: "Erreur lors de la génération. Réessaie.", timestamp: Date.now() },
+      ]);
+    }
   }
 
   async function handleSendChat() {
@@ -663,7 +823,6 @@ export default function TrainPage() {
       squares_1_30: "Carrés",
       decomposition: "Décompositions",
       fast_multiplication: "Mult. rapides",
-      estimation: "Estimation",
       mixed: "Mixte",
       chain: "Chaînes",
     };
@@ -956,18 +1115,46 @@ export default function TrainPage() {
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
             {messages.length === 0 && (
-              <div className="mt-3 space-y-3">
-                <p className="text-xs text-slate-400 text-center">
-                  Choisis un type ou écris ta demande :
-                </p>
-                <div className="flex flex-wrap gap-1.5 justify-center">
-                  {SUGGESTION_CHIPS.map((chip) => (
-                    <button key={chip.label} onClick={() => setChatInput(chip.text)}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-medium text-slate-600 transition-all border border-slate-200 hover:border-slate-300">
-                      {chip.label}
-                    </button>
-                  ))}
+              <div className="mt-3 space-y-4">
+                <div className="space-y-2">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center">
+                    Types de calcul
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 justify-center">
+                    {SUGGESTION_CHIPS.map((chip) => (
+                      <button key={chip.label} onClick={() => setChatInput(chip.text)}
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-medium text-slate-600 transition-all border border-slate-200 hover:border-slate-300">
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+                <div className="space-y-2">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center">
+                    Questions fréquentes
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    {COMMON_QUESTIONS.map((q) => (
+                      <button key={q.label} onClick={() => setChatInput(q.text)}
+                        className="px-3 py-2 rounded-lg bg-purple-50 hover:bg-purple-100 text-xs font-medium text-purple-700 transition-all border border-purple-100 hover:border-purple-200 text-left">
+                        {q.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Weakness training CTA */}
+                {userWeaknesses.length > 0 && (
+                  <div className="pt-1">
+                    <button onClick={handleWeaknessTraining}
+                      className="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white text-xs font-bold shadow-md hover:shadow-lg transition-all active:scale-95">
+                      <span>🎯</span>
+                      <span>Travailler mes faiblesses</span>
+                    </button>
+                    <p className="text-[10px] text-slate-400 text-center mt-1.5">
+                      {userWeaknesses.map(w => `${w.label} (${w.score})`).join(" · ")}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
             {messages.map((msg, i) => (
@@ -1012,7 +1199,29 @@ export default function TrainPage() {
                 {currentExercise.question}
               </div>
 
-              {/* Answer input */}
+              {/* Answer input — speed mode (QCM) or normal numpad */}
+              {trainingMode === "speed" ? (
+                <div className="grid grid-cols-2 gap-3 max-w-xs w-full">
+                  {speedChoices.map((choice) => {
+                    const isCorrectChoice = choice === currentExercise.correct_answer;
+                    const isPicked = speedPicked === choice;
+                    const showResult = speedPicked !== null;
+                    let btnClass = "bg-white border-2 border-slate-200 text-slate-900 hover:border-primary hover:bg-primary/5";
+                    if (showResult && isCorrectChoice) {
+                      btnClass = "bg-green-100 border-2 border-green-400 text-green-700";
+                    } else if (showResult && isPicked && !isCorrectChoice) {
+                      btnClass = "bg-red-100 border-2 border-red-400 text-red-700";
+                    }
+                    return (
+                      <button key={choice} onClick={() => handleSpeedChoice(choice)}
+                        disabled={speedPicked !== null}
+                        className={`py-5 rounded-2xl font-bold text-2xl transition-all duration-150 select-none ${btnClass}`}>
+                        {choice}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
               <>
                   <div className="mb-4 min-w-[260px]">
                     <div className={`rounded-2xl border-2 px-8 py-3 text-center text-4xl font-mono min-h-[56px] flex items-center justify-center transition-all duration-150 bg-white ${
@@ -1041,7 +1250,7 @@ export default function TrainPage() {
                     ))}
                   </div>
                 </>
-
+              )}
               {/* Tip (only if hints enabled) */}
               {showHints && currentExercise.tip && (
                 <div className="absolute bottom-3 left-4 right-4">

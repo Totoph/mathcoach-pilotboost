@@ -126,6 +126,7 @@ export default function VoiceTrainer({
   } = useVoice({
     lang,
     onResult: handleVoiceResult,
+    speechRate,
   });
 
   const labels = LABELS[lang];

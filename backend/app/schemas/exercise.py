@@ -11,7 +11,6 @@ class ExerciseCategory(str, Enum):
     PERCENTAGE = "percentage"
     FRACTION = "fraction"
     MIXED = "mixed"
-    ESTIMATION = "estimation"
     SEQUENCE = "sequence"
 
 

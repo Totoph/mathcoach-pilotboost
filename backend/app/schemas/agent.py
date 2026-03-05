@@ -39,6 +39,7 @@ class SkillSnapshotResponse(BaseModel):
     date: str
     global_level: float
     skill_scores: Dict[str, float]
+    total_exercises: int = 0
 
 
 # ────────────────────────── Agent State ──────────────────────────
@@ -201,12 +202,22 @@ class ConversationHistoryResponse(BaseModel):
 
 # ────────────────────────── Dashboard ──────────────────────────
 
+class DailyTimeEntry(BaseModel):
+    """One day of aggregated exercise time."""
+    date: str
+    time_ms: int = 0
+    exercises: int = 0
+
+
 class DashboardResponse(BaseModel):
     """Complete dashboard data in a single call."""
     global_level: float = 0.0
     total_exercises: int = 0
     total_correct: int = 0
     accuracy: float = 0.0
+    avg_time_ms: float = 0.0
+    total_time_ms: int = 0
+    daily_time_data: List[DailyTimeEntry] = Field(default_factory=list)
     skills: List[SkillScore] = Field(default_factory=list)
     strengths: List[str] = Field(default_factory=list)
     weaknesses: List[str] = Field(default_factory=list)

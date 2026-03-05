@@ -103,25 +103,6 @@ def generate_exercise(
             answer = round((n1 * n2) / (d1 * d2), 4)
         hint = "Convert to common denominator or decimals"
 
-    elif category == ExerciseCategory.ESTIMATION:
-        a = random.randint(low, high) + random.random()
-        b = random.randint(low, high) + random.random()
-        a = round(a, 1)
-        b = round(b, 1)
-        op = random.choice(["+", "-", "×"])
-        if op == "+":
-            question = f"Estimate: {a} + {b}"
-            answer = round(a + b)
-        elif op == "-":
-            if a < b:
-                a, b = b, a
-            question = f"Estimate: {a} - {b}"
-            answer = round(a - b)
-        else:
-            question = f"Estimate: {a} × {b}"
-            answer = round(a * b)
-        hint = "Round to nearest whole number first"
-
     elif category == ExerciseCategory.SEQUENCE:
         # Number sequences
         start = random.randint(1, 20)

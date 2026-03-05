@@ -114,6 +114,8 @@ interface UseVoiceOptions {
   lang: VoiceLang;
   onResult?: (answer: string) => void;
   autoListen?: boolean;
+  /** Speech rate for TTS (default 1.0) */
+  speechRate?: number;
 }
 
 interface UseVoiceReturn {
@@ -139,7 +141,7 @@ interface UseVoiceReturn {
   error: string | null;
 }
 
-export function useVoice({ lang, onResult, autoListen }: UseVoiceOptions): UseVoiceReturn {
+export function useVoice({ lang, onResult, autoListen, speechRate = 1.0 }: UseVoiceOptions): UseVoiceReturn {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
@@ -152,6 +154,12 @@ export function useVoice({ lang, onResult, autoListen }: UseVoiceOptions): UseVo
 
   const langRef = useRef(lang);
   langRef.current = lang;
+
+  const speechRateRef = useRef(speechRate);
+  speechRateRef.current = speechRate;
+
+  // When true, onend will auto-restart recognition (silence timeout recovery)
+  const wantListeningRef = useRef(false);
 
   // Check browser support
   const isSupported =
@@ -175,7 +183,7 @@ export function useVoice({ lang, onResult, autoListen }: UseVoiceOptions): UseVo
         const utterance = new SpeechSynthesisUtterance(text);
         const { speechLang } = LANG_MAP[langRef.current];
         utterance.lang = speechLang;
-        utterance.rate = 1.0;
+        utterance.rate = speechRateRef.current;
         utterance.pitch = 1.0;
 
         // Try to find a matching voice
@@ -215,6 +223,9 @@ export function useVoice({ lang, onResult, autoListen }: UseVoiceOptions): UseVo
       return;
     }
 
+    // Signal that we want to stay listening (enables auto-restart on silence timeout)
+    wantListeningRef.current = true;
+
     // Stop existing recognition
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch {}
@@ -240,6 +251,9 @@ export function useVoice({ lang, onResult, autoListen }: UseVoiceOptions): UseVo
       const last = results[results.length - 1];
 
       if (last.isFinal) {
+        // We got a real result — don't restart after onend fires
+        wantListeningRef.current = false;
+
         const raw = last[0].transcript;
         setTranscript(raw);
 
@@ -269,14 +283,45 @@ export function useVoice({ lang, onResult, autoListen }: UseVoiceOptions): UseVo
     };
 
     recognition.onerror = (event: any) => {
+      // "no-speech" means silence timeout — let onend handle the restart
+      // "aborted" means we called stop() ourselves — don't restart
+      if (event.error === "aborted") {
+        wantListeningRef.current = false;
+      }
       if (event.error !== "no-speech" && event.error !== "aborted") {
         setError(`Speech error: ${event.error}`);
+        wantListeningRef.current = false;
       }
-      setIsListening(false);
+      if (event.error !== "no-speech") {
+        setIsListening(false);
+      }
     };
 
     recognition.onend = () => {
-      setIsListening(false);
+      if (wantListeningRef.current) {
+        // Silence timeout — restart seamlessly so the user can speak whenever ready
+        setTimeout(() => {
+          if (!wantListeningRef.current) return;
+          try {
+            const newRecognition = new SpeechRecognition();
+            newRecognition.lang = LANG_MAP[langRef.current].recognitionLang;
+            newRecognition.continuous = false;
+            newRecognition.interimResults = true;
+            newRecognition.maxAlternatives = 3;
+            newRecognition.onstart = recognition.onstart;
+            newRecognition.onresult = recognition.onresult;
+            newRecognition.onerror = recognition.onerror;
+            newRecognition.onend = recognition.onend;
+            recognitionRef.current = newRecognition;
+            newRecognition.start();
+          } catch {
+            wantListeningRef.current = false;
+            setIsListening(false);
+          }
+        }, 150);
+      } else {
+        setIsListening(false);
+      }
     };
 
     recognitionRef.current = recognition;
@@ -284,6 +329,8 @@ export function useVoice({ lang, onResult, autoListen }: UseVoiceOptions): UseVo
   }, [isSupported]);
 
   const stopListening = useCallback(() => {
+    // Clear the restart flag first so onend doesn't restart
+    wantListeningRef.current = false;
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch {}
       setIsListening(false);
@@ -293,6 +340,7 @@ export function useVoice({ lang, onResult, autoListen }: UseVoiceOptions): UseVo
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      wantListeningRef.current = false;
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch {}
       }

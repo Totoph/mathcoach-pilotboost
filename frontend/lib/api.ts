@@ -55,6 +55,13 @@ export interface SkillSnapshot {
   date: string;
   global_level: number;
   skill_scores: Record<string, number>;
+  total_exercises: number;
+}
+
+export interface DailyTimeEntry {
+  date: string;
+  time_ms: number;
+  exercises: number;
 }
 
 export interface DashboardData {
@@ -62,6 +69,9 @@ export interface DashboardData {
   total_exercises: number;
   total_correct: number;
   accuracy: number;
+  avg_time_ms: number;
+  total_time_ms: number;
+  daily_time_data: DailyTimeEntry[];
   skills: SkillScore[];
   strengths: string[];
   weaknesses: string[];

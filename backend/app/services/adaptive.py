@@ -131,10 +131,6 @@ CATEGORY_TIPS = {
         "📊 Know key fraction-decimal pairs: 1/4 = 0.25, 1/3 ≈ 0.333, 1/8 = 0.125",
         "🔗 Find common denominators or convert to decimals for speed",
     ],
-    ExerciseCategory.ESTIMATION: [
-        "🎯 Round to the nearest convenient number, then adjust",
-        "📏 For multiplication, round one up and one down to compensate",
-    ],
     ExerciseCategory.SEQUENCE: [
         "📈 Check differences between terms first (arithmetic?)",
         "📊 If differences aren't constant, check ratios (geometric?)",

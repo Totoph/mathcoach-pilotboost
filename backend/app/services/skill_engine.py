@@ -102,15 +102,6 @@ SKILL_DEFINITIONS = {
             "mult_x99",
         ],
     },
-    "estimation": {
-        "label": "Estimation",
-        "weight": 0.05,
-        "order": 9,
-        "sub_skills": [
-            "round_estimate",
-            "order_magnitude",
-        ],
-    },
     "mixed": {
         "label": "Calculs mixtes",
         "weight": 0.05,
@@ -191,7 +182,6 @@ class SkillVector:
     squares_1_30: SkillData = field(default_factory=SkillData)
     decomposition: SkillData = field(default_factory=SkillData)
     fast_multiplication: SkillData = field(default_factory=SkillData)
-    estimation: SkillData = field(default_factory=SkillData)
     mixed: SkillData = field(default_factory=SkillData)
     chain: SkillData = field(default_factory=SkillData)
     advanced: SkillData = field(default_factory=SkillData)

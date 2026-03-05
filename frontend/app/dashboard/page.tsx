@@ -2,13 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { getUser, signOut } from "@/lib/supabase";
-import { api, DashboardData, SkillScore } from "@/lib/api";
+import { api, DashboardData, SkillScore, DailyTimeEntry } from "@/lib/api";
 import {
-  LogOut, Sparkles, Zap, Target,
+  LogOut, Zap, Target,
   Brain, Timer, Trophy,
-  AlertTriangle, CheckCircle2, Flame, BarChart3,
+  AlertTriangle, BarChart3, Clock, BookOpen, TrendingUp,
 } from "lucide-react";
 
 const SKILL_COLORS: Record<string, string> = {
@@ -20,7 +19,6 @@ const SKILL_COLORS: Record<string, string> = {
   squares: "bg-rose-500",
   decomposition: "bg-emerald-500",
   fast_multiplication: "bg-orange-500",
-  estimation: "bg-teal-500",
   mixed: "bg-pink-500",
   chain: "bg-lime-600",
   advanced: "bg-red-600",
@@ -35,12 +33,76 @@ function getLevelLabel(level: number): string {
   return "Nouveau";
 }
 
-function getLevelColor(level: number): string {
-  if (level >= 90) return "text-amber-500";
-  if (level >= 75) return "text-violet-500";
-  if (level >= 55) return "text-blue-500";
-  if (level >= 30) return "text-emerald-500";
-  return "text-slate-500";
+type Period = "day" | "week" | "month";
+
+function filterTimeData(data: DailyTimeEntry[], period: Period): DailyTimeEntry[] {
+  const now = new Date();
+  const days = period === "month" ? 30 : period === "week" ? 7 : 1;
+  const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  const cutoffStr = cutoff.toISOString().split("T")[0];
+  return data.filter((d) => d.date >= cutoffStr);
+}
+
+function formatTimeMs(ms: number): string {
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 1) return "< 1 min";
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h}h ${m}min` : `${h}h`;
+}
+
+function formatAvgTime(ms: number): string {
+  const seconds = ms / 1000;
+  if (seconds < 1) return "–";
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  return `${Math.round(seconds / 60)}min`;
+}
+
+/** Simple SVG bar chart for daily time */
+function BarChart({
+  data,
+  color = "#6366f1",
+  height = 90,
+}: {
+  data: { x: number; y: number; label: string }[];
+  color?: string;
+  height?: number;
+}) {
+  if (data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-slate-400">
+        Pas de données
+      </div>
+    );
+  }
+  const width = 400;
+  const pad = 6;
+  const maxY = Math.max(...data.map((d) => d.y), 1);
+  const barWidth = Math.max(4, (width - 2 * pad) / data.length - 2);
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ height }}>
+      {data.map((d, i) => {
+        const barH = (d.y / maxY) * (height - 2 * pad);
+        const x = pad + i * ((width - 2 * pad) / data.length) + 1;
+        const y = height - pad - barH;
+        return (
+          <g key={i}>
+            <rect
+              x={x}
+              y={y}
+              width={barWidth}
+              height={barH}
+              rx={2}
+              fill={color}
+              opacity={0.8}
+            />
+          </g>
+        );
+      })}
+    </svg>
+  );
 }
 
 export default function DashboardPage() {
@@ -49,7 +111,7 @@ export default function DashboardPage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [user, setUser] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [trainingMode, setTrainingMode] = useState<string | null>(null);
+  const [period, setPeriod] = useState<Period>("week");
 
   useEffect(() => {
     async function init() {
@@ -68,12 +130,6 @@ export default function DashboardPage() {
     }
     init();
   }, [router]);
-
-  async function handleSetMode(mode: string) {
-    setTrainingMode(mode);
-    try { await api.setTrainingMode(mode); } catch {}
-    router.push("/train");
-  }
 
   if (loading) {
     return (
@@ -103,11 +159,37 @@ export default function DashboardPage() {
 
   const d = dashboard;
   const levelLabel = getLevelLabel(d.global_level);
-  const levelColor = getLevelColor(d.global_level);
+
+  // Filter daily time data by period
+  const filteredTime = filterTimeData(d.daily_time_data || [], period);
+  const totalTimeInPeriod = filteredTime.reduce((s, e) => s + e.time_ms, 0);
+  const totalExInPeriod = filteredTime.reduce((s, e) => s + e.exercises, 0);
+
+  // Bar chart data
+  const chartData = filteredTime.map((e, i) => ({
+    x: i,
+    y: Math.round(e.time_ms / 60000), // minutes
+    label: e.date.slice(5),
+  }));
+
+  const PERIODS: { key: Period; label: string }[] = [
+    { key: "day", label: "Jour" },
+    { key: "week", label: "Semaine" },
+    { key: "month", label: "Mois" },
+  ];
+
+  // Streak: consecutive days with exercises (from today backwards)
+  const allDates = new Set((d.daily_time_data || []).map((e) => e.date));
+  let streak = 0;
+  for (let i = 0; i < 365; i++) {
+    const date = new Date(Date.now() - i * 86400000).toISOString().split("T")[0];
+    if (allDates.has(date)) streak++;
+    else if (i > 0) break;
+  }
 
   return (
     <div className="space-y-4">
-      {/* ──── Row 1: Welcome + Level Gauge ──── */}
+      {/* ──── Row 1: Welcome + Level ──── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bento-card p-8">
           <div className="flex items-start justify-between">
@@ -123,7 +205,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Level card */}
+        {/* Level card — clean, no diagnostic bar */}
         <div className="bento-card p-6 flex flex-col justify-center items-center text-center bg-gradient-to-br from-primary to-blue-600 border-0 relative overflow-hidden">
           <div className="absolute inset-0 opacity-10">
             <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-white" />
@@ -134,124 +216,102 @@ export default function DashboardPage() {
             {Math.round(d.global_level)}
           </div>
           <p className="text-blue-100 text-sm font-medium">/100 · {levelLabel}</p>
-          {!d.diagnostic_completed && (
-            <div className="mt-3 w-full">
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-1.5 bg-white/20 rounded-full overflow-hidden">
-                  <div className="h-full bg-white/80 rounded-full transition-all" style={{ width: `${Math.min(d.total_exercises / 20, 1) * 100}%` }} />
-                </div>
-                <span className="text-xs text-white/70">{d.total_exercises}/20</span>
-              </div>
-              <p className="text-xs text-blue-100 mt-1">Test de niveau en cours</p>
-            </div>
-          )}
         </div>
       </div>
 
       {/* ──── Row 2: Quick Stats ──── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard icon={<Zap className="w-5 h-5" />} label="Exercices" value={String(d.total_exercises)} color="bg-blue-50 text-blue-600" />
-        <StatCard icon={<Target className="w-5 h-5" />} label="Précision" value={`${d.accuracy}%`} color="bg-green-50 text-green-600" />
-        <StatCard icon={<Flame className="w-5 h-5" />} label="Réussites" value={String(d.total_correct)} color="bg-orange-50 text-orange-600" />
-        <StatCard icon={<Brain className="w-5 h-5" />} label="Compétences" value={`${d.skills.filter(s => s.score > 0).length}/12`} color="bg-purple-50 text-purple-600" />
+        <StatCard icon={<Clock className="w-5 h-5" />} label="Temps moyen" value={formatAvgTime(d.avg_time_ms)} color="bg-green-50 text-green-600" />
+        <StatCard icon={<TrendingUp className="w-5 h-5" />} label="Série en cours" value={`${streak} j`} color="bg-orange-50 text-orange-600" />
+        <StatCard icon={<Timer className="w-5 h-5" />} label="Temps total" value={formatTimeMs(d.total_time_ms)} color="bg-purple-50 text-purple-600" />
       </div>
 
-      {/* ──── Row 3: Skills Grid + Agent ──── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Skills overview */}
-        <div className="lg:col-span-2 bento-card p-6">
-          <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+      {/* ──── Row 3: Temps passé chart ──── */}
+      <div className="bento-card p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="font-bold text-slate-900 flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-primary" />
-            Compétences (12 dimensions)
+            Temps passé
           </h3>
-          <div className="space-y-3">
-            {d.skills.map((skill) => (
-              <SkillBar key={skill.name} skill={skill} />
+          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
+            {PERIODS.map(({ key, label }) => (
+              <button key={key} onClick={() => setPeriod(key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  period === key
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}>
+                {label}
+              </button>
             ))}
           </div>
         </div>
 
-        {/* Agent message + strengths/weaknesses */}
-        <div className="space-y-4">
-          <div className="bento-card p-6">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-9 h-9 rounded-xl bg-purple-50 flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-purple-600" />
-              </div>
-              <h3 className="font-bold text-slate-900 text-sm">Coach IA</h3>
-            </div>
-            <p className="text-slate-600 text-sm leading-relaxed">{d.agent_message}</p>
+        {filteredTime.length === 0 ? (
+          <div className="text-center py-10 text-slate-400 text-sm">
+            Aucune donnée pour cette période
           </div>
-
-          {d.strengths.length > 0 && (
-            <div className="bento-card p-5">
-              <h4 className="font-bold text-slate-900 text-sm mb-3 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-green-500" /> Points forts
-              </h4>
-              <div className="flex flex-wrap gap-2">
-                {d.strengths.map((s) => (
-                  <span key={s} className="text-xs px-2.5 py-1 bg-green-50 text-green-700 rounded-full font-medium">{s}</span>
-                ))}
+        ) : (
+          <div>
+            <div className="flex items-center gap-6 mb-4">
+              <div>
+                <span className="text-2xl font-bold text-slate-900">{formatTimeMs(totalTimeInPeriod)}</span>
+                <span className="text-xs text-slate-400 ml-2">total</span>
+              </div>
+              <div>
+                <span className="text-lg font-bold text-slate-700">{totalExInPeriod}</span>
+                <span className="text-xs text-slate-400 ml-1">exercices</span>
               </div>
             </div>
-          )}
-
-          {d.weaknesses.length > 0 && (
-            <div className="bento-card p-5">
-              <h4 className="font-bold text-slate-900 text-sm mb-3 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-orange-500" /> À travailler
-              </h4>
-              <div className="flex flex-wrap gap-2">
-                {d.weaknesses.map((w) => (
-                  <span key={w} className="text-xs px-2.5 py-1 bg-orange-50 text-orange-700 rounded-full font-medium">{w}</span>
-                ))}
+            <BarChart data={chartData} color="#6366f1" height={90} />
+            {filteredTime.length > 1 && (
+              <div className="flex justify-between text-[10px] text-slate-400 mt-1 px-1">
+                <span>{filteredTime[0]?.date?.slice(5)}</span>
+                <span>{filteredTime[filteredTime.length - 1]?.date?.slice(5)}</span>
               </div>
-            </div>
-          )}
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ──── Row 4: Skills Grid (full width) ──── */}
+      <div className="bento-card p-6">
+        <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+          <Brain className="w-5 h-5 text-primary" />
+          Compétences
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+          {d.skills.map((skill) => (
+            <SkillBar key={skill.name} skill={skill} />
+          ))}
         </div>
       </div>
 
-      {/* ──── Row 4: Training Mode Selector + CTA ──── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <ModeCard title="Entraînement libre" desc="L'agent choisit" icon={<Brain className="w-6 h-6" />}
-          color="from-slate-900 to-slate-800" onClick={() => handleSetMode("free")} />
-        <ModeCard title="Tables 1-20" desc="Drill les tables" icon={<Target className="w-6 h-6" />}
-          color="from-amber-500 to-orange-500" onClick={() => handleSetMode("tables")} />
-        <ModeCard title="Mode Vitesse" desc="Réponse rapide" icon={<Timer className="w-6 h-6" />}
-          color="from-violet-600 to-purple-600" onClick={() => handleSetMode("speed")} />
-        <ModeCard title="Techniques" desc="Astuces avancées" icon={<Sparkles className="w-6 h-6" />}
-          color="from-emerald-600 to-teal-600" onClick={() => handleSetMode("advanced")} />
-      </div>
-
-      {/* ──── Row 5: Error Breakdown (if data) ──── */}
-      {Object.values(d.error_breakdown).some(v => v > 0) && (
-        <div className="bento-card p-6">
-          <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-orange-500" />
-            Analyse des erreurs
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            {Object.entries(d.error_breakdown).filter(([, v]) => v > 0).map(([type, count]) => (
-              <div key={type} className="text-center p-3 bg-slate-50 rounded-xl">
-                <div className="text-2xl font-bold text-slate-900">{count}</div>
-                <div className="text-xs text-slate-500 mt-1">{errorLabel(type)}</div>
-              </div>
+      {/* ──── Row 5: Weaknesses (only if data) ──── */}
+      {d.weaknesses.length > 0 && (
+        <div className="bento-card p-5">
+          <h4 className="font-bold text-slate-900 text-sm mb-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-orange-500" /> À travailler
+          </h4>
+          <div className="flex flex-wrap gap-2">
+            {d.weaknesses.map((w) => (
+              <span key={w} className="text-xs px-2.5 py-1 bg-orange-50 text-orange-700 rounded-full font-medium">{w}</span>
             ))}
           </div>
         </div>
       )}
 
-      {/* ──── Quick Links ──── */}
-      <div className="grid grid-cols-1 gap-4">
-        <Link href="/profile" className="bento-card p-5 flex items-center gap-3 group">
-          <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center group-hover:bg-purple-100 transition-colors">
-            <Sparkles className="w-5 h-5 text-purple-600" />
-          </div>
-          <div>
-            <p className="font-semibold text-slate-900 text-sm">Profil</p>
-            <p className="text-xs text-slate-400">Gérer votre compte</p>
-          </div>
-        </Link>
+      {/* ──── Row 6: Training Mode Selector ──── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <ModeCard title="Entraînement libre" desc="L'agent choisit" icon={<Brain className="w-6 h-6" />}
+          color="from-slate-900 to-slate-800" onClick={() => { api.setTrainingMode("free").catch(() => {}); router.push("/train?mode=free"); }} />
+        <ModeCard title="Tables 1-20" desc="Drill les tables" icon={<Target className="w-6 h-6" />}
+          color="from-amber-500 to-orange-500" onClick={() => { api.setTrainingMode("tables").catch(() => {}); router.push("/train?mode=tables"); }} />
+        <ModeCard title="Mode Vitesse" desc="QCM rapide" icon={<Timer className="w-6 h-6" />}
+          color="from-violet-600 to-purple-600" onClick={() => { api.setTrainingMode("speed").catch(() => {}); router.push("/train?mode=speed"); }} />
+        <ModeCard title="Techniques" desc="Astuces de calcul" icon={<BookOpen className="w-6 h-6" />}
+          color="from-emerald-600 to-teal-600" onClick={() => router.push("/techniques")} />
       </div>
     </div>
   );
@@ -301,16 +361,4 @@ function ModeCard({ title, desc, icon, color, onClick }: {
       <p className="text-white/60 text-xs mt-1">{desc}</p>
     </button>
   );
-}
-
-function errorLabel(type: string): string {
-  const labels: Record<string, string> = {
-    table_error: "Erreur de table",
-    carry_error: "Retenue",
-    inattention: "Inattention",
-    procedure_error: "Procédure",
-    timeout: "Trop lent",
-    slow: "Lent",
-  };
-  return labels[type] || type;
 }
