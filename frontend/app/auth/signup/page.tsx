@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { signUp } from "@/lib/supabase";
 
 export default function SignupPage() {
@@ -28,63 +29,69 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-800 text-white flex items-center justify-center px-4">
-      <div className="max-w-md w-full">
-        <Link href="/" className="text-gray-400 hover:text-white mb-8 inline-block">
-          ← Retour
+    <div className="min-h-[calc(100vh-8rem)] flex items-center justify-center">
+      <div className="w-full max-w-md space-y-4">
+        <Link
+          href="/"
+          className="bento-card p-3 inline-flex items-center gap-2 text-sm text-slate-400 hover:text-slate-700 transition-all"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Retour
         </Link>
 
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold mb-2">🧮 MathCoach</h1>
-          <p className="text-gray-400">Créer votre compte</p>
-        </div>
+        <div className="bento-card p-8">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-extrabold text-slate-900 mb-2">Créer un compte</h1>
+            <p className="text-sm text-slate-400">Commencez votre entraînement MathCoach</p>
+          </div>
 
-        <form onSubmit={handleSubmit} className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 border border-white/10">
-          {error && (
-            <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-sm">
-              {error}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+              <div className="p-3 bg-red-50/80 border border-red-100 rounded-xl text-sm text-red-600">
+                {error}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-50/80 border border-slate-100 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/10 text-sm transition-all"
+                required
+              />
             </div>
-          )}
 
-          <div className="mb-4">
-            <label className="block text-sm font-medium mb-2">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-primary focus:outline-none"
-              required
-            />
-          </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Mot de passe</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-50/80 border border-slate-100 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/10 text-sm transition-all"
+                required
+                minLength={6}
+              />
+              <p className="text-xs text-slate-400 mt-1.5">Minimum 6 caractères</p>
+            </div>
 
-          <div className="mb-6">
-            <label className="block text-sm font-medium mb-2">Mot de passe</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-primary focus:outline-none"
-              required
-              minLength={6}
-            />
-            <p className="text-xs text-gray-400 mt-1">Minimum 6 caractères</p>
-          </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 bg-slate-900 text-white rounded-xl font-semibold text-sm hover:bg-slate-800 hover:shadow-lg transition-all disabled:opacity-50"
+            >
+              {loading ? "Création..." : "Créer mon compte"}
+            </button>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 bg-gradient-to-r from-primary to-secondary rounded-lg font-semibold hover:shadow-xl transition disabled:opacity-50"
-          >
-            {loading ? "Création..." : "Créer mon compte"}
-          </button>
-
-          <p className="text-center text-sm text-gray-400 mt-4">
-            Déjà un compte ?{" "}
-            <Link href="/auth/login" className="text-primary hover:underline">
-              Se connecter
-            </Link>
-          </p>
-        </form>
+            <p className="text-center text-sm text-slate-400 pt-2">
+              Déjà un compte ?{" "}
+              <Link href="/auth/login" className="text-primary font-medium hover:underline">
+                Se connecter
+              </Link>
+            </p>
+          </form>
+        </div>
       </div>
     </div>
   );

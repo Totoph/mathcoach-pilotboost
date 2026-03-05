@@ -1,21 +1,75 @@
+"""
+MathCoach Agent Schemas V2
+==========================
+Pydantic models for the skill-based agent system.
+"""
 from pydantic import BaseModel, Field
-from typing import Optional, List, Literal
+from typing import Optional, List, Dict, Literal
 from datetime import datetime
 from uuid import UUID
 
 
+# ────────────────────────── Skill Models ──────────────────────────
+
+class SkillScore(BaseModel):
+    """Individual skill score for API responses."""
+    name: str
+    label: str
+    score: float = 0.0
+    accuracy: float = 0.5
+    speed_avg_ms: float = 10000.0
+    attempts: int = 0
+    streak: int = 0
+    difficulty_mastered: int = 1
+    is_automated: bool = False
+    is_plateau: bool = False
+
+
+class SkillVectorResponse(BaseModel):
+    """Full skill vector for dashboard display."""
+    global_level: float = 0.0
+    skills: List[SkillScore] = Field(default_factory=list)
+    strengths: List[str] = Field(default_factory=list)
+    weaknesses: List[str] = Field(default_factory=list)
+    focus_areas: List[str] = Field(default_factory=list)
+
+
+class SkillSnapshotResponse(BaseModel):
+    """Daily snapshot for graphing."""
+    date: str
+    global_level: float
+    skill_scores: Dict[str, float]
+
+
+# ────────────────────────── Agent State ──────────────────────────
+
 class AgentState(BaseModel):
-    """État interne de l'agent IA"""
+    """État interne de l'agent IA — V2 with full cognitive profile."""
+    # Legacy compatibility
     strengths: List[str] = Field(default_factory=list)
     weaknesses: List[str] = Field(default_factory=list)
     focus_areas: List[str] = Field(default_factory=list)
     last_difficulty: int = 1
     session_count: int = 0
     total_exercises: int = 0
+    # V2 fields
+    skill_vector: Dict = Field(default_factory=dict)
+    global_level: float = 0.0
+    total_correct: int = 0
+    error_counts: Dict[str, int] = Field(default_factory=lambda: {
+        "table_error": 0,
+        "carry_error": 0,
+        "inattention": 0,
+        "procedure_error": 0,
+        "timeout": 0,
+        "slow": 0,
+    })
+    training_mode: Optional[str] = None
+    last_session_date: Optional[str] = None
 
 
 class AgentInstance(BaseModel):
-    """Instance d'agent IA pour un utilisateur"""
+    """Instance d'agent IA pour un utilisateur."""
     id: UUID
     user_id: UUID
     current_level: int
@@ -25,8 +79,10 @@ class AgentInstance(BaseModel):
     updated_at: datetime
 
 
+# ────────────────────────── Conversations ──────────────────────────
+
 class ConversationMessage(BaseModel):
-    """Message dans la conversation agent ↔ utilisateur"""
+    """Message dans la conversation agent ↔ utilisateur."""
     id: UUID
     agent_instance_id: UUID
     role: Literal["user", "agent"]
@@ -36,7 +92,7 @@ class ConversationMessage(BaseModel):
 
 
 class ExercisePerformance(BaseModel):
-    """Performance sur un exercice individuel"""
+    """Performance sur un exercice individuel."""
     id: UUID
     agent_instance_id: UUID
     exercise_type: str
@@ -47,62 +103,88 @@ class ExercisePerformance(BaseModel):
     time_taken_ms: Optional[int]
     difficulty: int
     tip_shown: Optional[str]
+    error_type: Optional[str] = None
+    sub_skill: Optional[str] = None
     created_at: datetime
 
 
-# Request/Response schemas
+# ────────────────────────── Request / Response ──────────────────────────
 
 class ChatRequest(BaseModel):
-    """Message utilisateur vers l'agent"""
     message: str
 
 
 class ChatResponse(BaseModel):
-    """Réponse de l'agent"""
     agent_message: str
+    tips: List[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
 
 
 class NextExerciseRequest(BaseModel):
-    """Demande de prochain exercice"""
-    pass  # L'agent décide tout
+    training_mode: Optional[str] = None  # "tables", "free", or None (agent decides)
 
 
 class NextExerciseResponse(BaseModel):
-    """Prochain exercice généré par l'agent"""
-    exercise_id: str  # Return as string for JSON serialization
+    exercise_id: str
     question: str
     exercise_type: str
+    sub_skill: Optional[str] = None
     difficulty: int
     tip: Optional[str] = None
     time_limit_ms: Optional[int] = None
-    agent_intro: Optional[str] = None  # Message d'intro de l'agent
+    agent_intro: Optional[str] = None
 
 
 class SubmitAnswerRequest(BaseModel):
-    """Soumission de réponse"""
-    exercise_id: str  # Accept as string, convert to UUID in service
+    exercise_id: str
     user_answer: str
     time_taken_ms: Optional[int] = None
 
 
 class SubmitAnswerResponse(BaseModel):
-    """Feedback après réponse"""
     is_correct: bool
     correct_answer: str
-    agent_feedback: str  # Message de l'agent
+    agent_feedback: str
     points_earned: int
+    error_type: Optional[str] = None
+    technique_tip: Optional[str] = None
     state_updated: bool
+    # V2: skill level updates
+    skill_name: Optional[str] = None
+    skill_score: Optional[float] = None
+    global_level: Optional[float] = None
 
 
 class AgentStateResponse(BaseModel):
-    """État actuel de l'agent"""
+    """État actuel de l'agent."""
     instance: AgentInstance
     recent_performance: dict
+    skill_vector: Optional[SkillVectorResponse] = None
     next_recommendation: Optional[str] = None
 
 
 class ConversationHistoryResponse(BaseModel):
-    """Historique de conversation"""
     messages: List[ConversationMessage]
     total: int
+
+
+# ────────────────────────── Dashboard ──────────────────────────
+
+class DashboardResponse(BaseModel):
+    """Complete dashboard data in a single call."""
+    global_level: float = 0.0
+    total_exercises: int = 0
+    total_correct: int = 0
+    accuracy: float = 0.0
+    skills: List[SkillScore] = Field(default_factory=list)
+    strengths: List[str] = Field(default_factory=list)
+    weaknesses: List[str] = Field(default_factory=list)
+    focus_areas: List[str] = Field(default_factory=list)
+    error_breakdown: Dict[str, int] = Field(default_factory=dict)
+    history: List[SkillSnapshotResponse] = Field(default_factory=list)
+    agent_message: Optional[str] = None
+    diagnostic_completed: bool = False
+
+
+class SetTrainingModeRequest(BaseModel):
+    mode: str = "free"  # "tables", "free", "speed", "diagnostic"

@@ -1,116 +1,196 @@
 """
-Service Agent IA - Gestion de la progression adaptative et conversation
+MathCoach Agent Service V2
+===========================
+Full adaptive agent with:
+- 12-dimension skill tracking
+- Error classification
+- Spaced repetition
+- Plateau/automatization detection
+- Smart exercise selection
+- Personalized tips & feedback via Gemini
 """
 import random
+import logging
 from uuid import UUID, uuid4
+from typing import Optional, List, Tuple
+from datetime import datetime, timezone, timedelta
 
-# In-memory exercise cache (MVP - use Redis in prod)
-_exercise_cache: dict[str, dict] = {}
-from typing import Optional, Dict, List, Tuple
-from datetime import datetime, timedelta
 from app.core.supabase import get_supabase_admin
-from app.core.gemini import generate_agent_response
+from app.core.gemini import generate_agent_response, generate_tip
+from app.services.skill_engine import (
+    SKILL_DEFINITIONS,
+    SkillVector,
+    SkillData,
+    UserCognitiveProfile,
+    update_skill_score,
+    compute_global_level,
+    identify_strengths_weaknesses,
+    select_focus_areas,
+    classify_error,
+    detect_plateau,
+    detect_automatization,
+    select_next_skill,
+    select_next_difficulty,
+    get_plateau_remedy,
+    compute_sr_quality,
+    SRItem,
+    EXPECTED_TIME_MS,
+)
+from app.services.exercise_engine_v2 import (
+    generate_exercise,
+    get_technique_tips,
+    TECHNIQUE_TIPS,
+)
 from app.schemas.agent import (
     AgentInstance, AgentState, ConversationMessage,
-    ExercisePerformance, NextExerciseResponse, SubmitAnswerResponse
+    NextExerciseResponse, SubmitAnswerResponse,
+    SkillScore, SkillVectorResponse, DashboardResponse,
+    SkillSnapshotResponse,
 )
+
+logger = logging.getLogger(__name__)
+
+# In-memory exercise cache (MVP — use Redis in prod for multi-process)
+_exercise_cache: dict[str, dict] = {}
 
 
 class AgentService:
-    """Service de gestion de l'agent IA personnel"""
-    
+    """Service de gestion de l'agent IA personnel V2."""
+
     def __init__(self):
         self.supabase = get_supabase_admin()
-    
+
+    # ══════════════════════════════════════════
+    #           INSTANCE MANAGEMENT
+    # ══════════════════════════════════════════
+
     async def get_or_create_instance(self, user_id: UUID) -> AgentInstance:
-        """Récupère ou crée l'instance agent pour un utilisateur"""
         result = self.supabase.table("agent_instances")\
-            .select("*")\
-            .eq("user_id", str(user_id))\
-            .execute()
-        
+            .select("*").eq("user_id", str(user_id)).execute()
+
         if result.data:
             data = result.data[0]
+            state_data = data.get("state", {})
             return AgentInstance(
-                id=UUID(data["id"]),
-                user_id=UUID(data["user_id"]),
+                id=UUID(data["id"]), user_id=UUID(data["user_id"]),
                 current_level=data["current_level"],
                 diagnostic_completed=data["diagnostic_completed"],
-                state=AgentState(**data["state"]),
-                created_at=data["created_at"],
-                updated_at=data["updated_at"]
+                state=AgentState(**{k: v for k, v in state_data.items()
+                                    if k in AgentState.model_fields}),
+                created_at=data["created_at"], updated_at=data["updated_at"],
             )
-        
-        # Créer nouvelle instance (normalement fait par trigger, mais fallback)
+
+        # Create new instance with V2 profile
+        profile = UserCognitiveProfile()
         new_data = {
-            "user_id": str(user_id),
-            "current_level": 0,
+            "user_id": str(user_id), "current_level": 0,
             "diagnostic_completed": False,
-            "state": AgentState().dict()
+            "state": profile.to_dict(),
         }
         result = self.supabase.table("agent_instances").insert(new_data).execute()
         data = result.data[0]
-        
-        # Message de bienvenue
-        await self._add_conversation(
-            UUID(data["id"]),
-            "agent",
-            "👋 Salut ! Je suis ton coach en calcul mental. On va commencer par un diagnostic rapide pour adapter l'entraînement à ton niveau. Prêt·e ?"
-        )
-        
+
+        state_data = data.get("state", {})
         return AgentInstance(
-            id=UUID(data["id"]),
-            user_id=UUID(data["user_id"]),
-            current_level=0,
-            diagnostic_completed=False,
-            state=AgentState(**data["state"]),
-            created_at=data["created_at"],
-            updated_at=data["updated_at"]
+            id=UUID(data["id"]), user_id=UUID(data["user_id"]),
+            current_level=0, diagnostic_completed=False,
+            state=AgentState(**{k: v for k, v in state_data.items()
+                                if k in AgentState.model_fields}),
+            created_at=data["created_at"], updated_at=data["updated_at"],
         )
-    
-    async def generate_next_exercise(self, user_id: UUID) -> NextExerciseResponse:
-        """Génère le prochain exercice adapté"""
+
+    def _load_profile(self, state: AgentState) -> UserCognitiveProfile:
+        """Load UserCognitiveProfile from AgentState."""
+        state_dict = state.model_dump()
+        return UserCognitiveProfile.from_dict(state_dict)
+
+    def _save_profile(self, profile: UserCognitiveProfile) -> dict:
+        """Serialize profile for DB storage."""
+        return profile.to_dict()
+
+    # ══════════════════════════════════════════
+    #           EXERCISE GENERATION
+    # ══════════════════════════════════════════
+
+    async def generate_next_exercise(
+        self,
+        user_id: UUID,
+        training_mode: Optional[str] = None,
+    ) -> NextExerciseResponse:
         instance = await self.get_or_create_instance(user_id)
-        
-        # Analyser les performances récentes
-        recent_perf = await self._get_recent_performance(instance.id, limit=10)
-        
-        # Choisir type et difficulté
-        exercise_type, difficulty = self._select_exercise_params(
-            instance, recent_perf
+        profile = self._load_profile(instance.state)
+
+        # Override training mode if specified
+        if training_mode:
+            profile.training_mode = training_mode
+
+        # Select skill and difficulty
+        skill_name, sub_skill = select_next_skill(profile, profile.training_mode)
+        skill_data = profile.skill_vector.get_skill(skill_name)
+        difficulty = select_next_difficulty(skill_data)
+
+        # Check for spaced repetition items due
+        sr_exercise = await self._check_spaced_repetition(
+            UUID(str(instance.user_id)), skill_name
         )
-        
-        # Générer la question
-        question, correct_answer = self._generate_question(exercise_type, difficulty)
-        
-        # Tip local instantané (évite la latence Gemini sur chaque exercice)
-        tip = self._get_quick_tip(exercise_type, difficulty)
-        
-        # Message d'intro de l'agent (contextualisé)
-        agent_intro = self._get_intro_message(instance, exercise_type)
-        
-        # Créer l'exercice ID (sera utilisé pour submit)
-        exercise_id = uuid4()
-        
-        # Cache exercise data server-side (MVP)
-        _exercise_cache[str(exercise_id)] = {
-            "question": question,
-            "correct_answer": correct_answer,
-            "exercise_type": exercise_type,
-            "difficulty": difficulty,
-            "tip": tip,
-        }
-        
+        if sr_exercise:
+            exercise_obj = sr_exercise
+        else:
+            exercise_obj = generate_exercise(skill_name, difficulty, sub_skill)
+
+        # Get agent intro message
+        agent_intro = self._get_intro_message(profile, skill_name, difficulty)
+
+        # Cache the exercise
+        _exercise_cache[exercise_obj.exercise_id] = exercise_obj.to_dict()
+
         return NextExerciseResponse(
-            exercise_id=str(exercise_id),
-            question=question,
-            exercise_type=exercise_type,
-            difficulty=difficulty,
-            tip=tip,
-            time_limit_ms=30000,  # 30s par défaut
-            agent_intro=agent_intro
+            exercise_id=exercise_obj.exercise_id,
+            question=exercise_obj.question,
+            exercise_type=exercise_obj.skill,
+            sub_skill=exercise_obj.sub_skill,
+            difficulty=exercise_obj.difficulty,
+            tip=exercise_obj.tip,
+            time_limit_ms=exercise_obj.time_limit_ms,
+            agent_intro=agent_intro,
         )
-    
+
+    async def _check_spaced_repetition(
+        self, user_id: UUID, preferred_skill: str
+    ) -> Optional[object]:
+        """Check if there are spaced repetition items due for review."""
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            result = self.supabase.table("spaced_repetition_queue")\
+                .select("*")\
+                .eq("user_id", str(user_id))\
+                .lte("next_review", now)\
+                .order("next_review")\
+                .limit(1)\
+                .execute()
+
+            if result.data:
+                item = result.data[0]
+                from app.services.exercise_engine_v2 import GeneratedExercise
+                return GeneratedExercise(
+                    exercise_id=str(uuid4()),
+                    skill=item["skill"],
+                    sub_skill=item.get("sub_skill", ""),
+                    question=item["question"],
+                    correct_answer=item["correct_answer"],
+                    difficulty=item["difficulty"],
+                    time_limit_ms=EXPECTED_TIME_MS.get(item["difficulty"], 15000),
+                    tip="Révision espacée — tu as déjà vu cet exercice !",
+                )
+        except Exception as e:
+            logger.warning(f"SR queue check failed: {e}")
+
+        return None
+
+    # ══════════════════════════════════════════
+    #           ANSWER SUBMISSION
+    # ══════════════════════════════════════════
+
     async def submit_answer(
         self,
         user_id: UUID,
@@ -118,293 +198,516 @@ class AgentService:
         user_answer: str,
         time_taken_ms: Optional[int],
     ) -> SubmitAnswerResponse:
-        """Soumet une réponse et retourne le feedback de l'agent"""
         instance = await self.get_or_create_instance(user_id)
-        
-        # Retrieve exercise data from server-side cache
+        profile = self._load_profile(instance.state)
+
+        # Get cached exercise
         cached = _exercise_cache.get(str(exercise_id))
         if not cached:
-            raise ValueError(f"Exercise {exercise_id} not found in cache (expired or invalid)")
-        
+            raise ValueError(f"Exercise {exercise_id} not found (expired or invalid)")
+
         question = cached["question"]
         correct_answer = cached["correct_answer"]
-        exercise_type = cached["exercise_type"]
+        skill_name = cached["skill"]
+        sub_skill = cached.get("sub_skill")
         difficulty = cached["difficulty"]
         tip_shown = cached.get("tip")
-        
-        # Vérifier la réponse
-        is_correct = self._check_answer(user_answer, correct_answer)
 
-        # Consommer l'exercice seulement quand la réponse est correcte
+        # Check answer
+        is_correct = self._check_answer(user_answer, correct_answer, skill_name)
+
+        # Classify error if incorrect
+        error_type = None
+        if not is_correct:
+            error_type = classify_error(
+                correct_answer, user_answer, skill_name, sub_skill,
+                time_taken_ms, difficulty
+            )
+            # Track error
+            profile.error_counts[error_type] = profile.error_counts.get(error_type, 0) + 1
+            # Store error pattern
+            await self._store_error_pattern(
+                user_id, skill_name, error_type, question,
+                correct_answer, user_answer, time_taken_ms
+            )
+
+        # Update skill score
+        skill_data = profile.skill_vector.get_skill(skill_name)
+        skill_data = update_skill_score(
+            skill_data, is_correct, time_taken_ms, difficulty, skill_name
+        )
+        profile.skill_vector.set_skill(skill_name, skill_data)
+
+        # Update global stats
+        profile.total_exercises += 1
         if is_correct:
+            profile.total_correct += 1
             _exercise_cache.pop(str(exercise_id), None)
-        
-        # Enregistrer la performance
+
+        # Compute new global level
+        profile.global_level = compute_global_level(profile.skill_vector)
+        profile.last_difficulty = difficulty
+
+        # Update strengths/weaknesses
+        strengths, weaknesses = identify_strengths_weaknesses(profile.skill_vector)
+        profile.strengths = strengths
+        profile.weaknesses = weaknesses
+        profile.focus_areas = select_focus_areas(profile.skill_vector, weaknesses)
+
+        # Check diagnostic completion
+        if not profile.diagnostic_completed and profile.total_exercises >= 10:
+            profile.diagnostic_completed = True
+
+        # Update spaced repetition
+        await self._update_spaced_repetition(
+            user_id, skill_name, sub_skill, question,
+            correct_answer, difficulty, is_correct, time_taken_ms
+        )
+
+        # Check for plateau
+        plateau_message = None
+        if detect_plateau(skill_data.score_history):
+            remedy = get_plateau_remedy(skill_name, skill_data)
+            plateau_message = remedy["message"]
+
+        # Save performance to DB
         perf_data = {
             "agent_instance_id": str(instance.id),
-            "exercise_type": exercise_type,
+            "exercise_type": skill_name,
+            "sub_skill": sub_skill,
             "question": question,
             "correct_answer": correct_answer,
             "user_answer": user_answer,
             "is_correct": is_correct,
             "time_taken_ms": time_taken_ms,
             "difficulty": difficulty,
-            "tip_shown": tip_shown
+            "tip_shown": tip_shown,
+            "error_type": error_type,
         }
         self.supabase.table("exercise_performances").insert(perf_data).execute()
-        
-        # Mettre à jour l'état de l'agent
-        await self._update_agent_state(instance, is_correct, exercise_type, difficulty)
-        
-        # Feedback local instantané (évite la latence Gemini sur chaque soumission)
-        agent_feedback = self._get_quick_feedback(is_correct, exercise_type, difficulty)
-        
-        points_earned = difficulty * 10 if is_correct else 0
-        
+
+        # Save updated profile to agent_instances
+        state_dict = self._save_profile(profile)
+        updates = {
+            "state": state_dict,
+            "current_level": max(1, int(profile.global_level / 20)),  # Map 0-100 to 0-5
+        }
+        if profile.diagnostic_completed and not instance.diagnostic_completed:
+            updates["diagnostic_completed"] = True
+        self.supabase.table("agent_instances")\
+            .update(updates).eq("id", str(instance.id)).execute()
+
+        # Save daily snapshot
+        await self._save_daily_snapshot(user_id, profile)
+
+        # Generate feedback
+        technique_tip = None
+        if not is_correct:
+            tips = get_technique_tips(skill_name, 1)
+            technique_tip = tips[0] if tips else None
+
+        agent_feedback = self._get_feedback(
+            is_correct, skill_name, difficulty, error_type, plateau_message
+        )
+        points_earned = self._calculate_points(is_correct, difficulty, time_taken_ms)
+
         return SubmitAnswerResponse(
             is_correct=is_correct,
             correct_answer=correct_answer,
             agent_feedback=agent_feedback,
             points_earned=points_earned,
-            state_updated=True
+            error_type=error_type,
+            technique_tip=technique_tip,
+            state_updated=True,
+            skill_name=skill_name,
+            skill_score=round(skill_data.score, 1),
+            global_level=round(profile.global_level, 1),
         )
-    
-    async def chat(self, user_id: UUID, message: str) -> str:
-        """Conversation libre avec l'agent"""
+
+    # ══════════════════════════════════════════
+    #                  CHAT
+    # ══════════════════════════════════════════
+
+    async def chat(self, user_id: UUID, message: str) -> dict:
+        """Chat with the agent — provides tips and techniques."""
         instance = await self.get_or_create_instance(user_id)
-        
-        # Enregistrer message utilisateur
+        profile = self._load_profile(instance.state)
         await self._add_conversation(instance.id, "user", message)
-        
-        # Construire contexte pour Gemini
-        context = f"""État de l'utilisateur :
-- Niveau : {instance.current_level}
-- Exercices faits : {instance.state.total_exercises}
-- Points forts : {', '.join(instance.state.strengths) if instance.state.strengths else 'En cours d\'évaluation'}
-- À travailler : {', '.join(instance.state.weaknesses) if instance.state.weaknesses else 'Rien pour l\'instant'}"""
-        
-        # Générer réponse avec Gemini
+
+        # Build rich context for Gemini
+        scores = profile.skill_vector.get_scores()
+        context = f"""Profil élève : niveau {round(profile.global_level)}/100, {profile.total_exercises} exercices, {round(profile.total_correct / max(1, profile.total_exercises) * 100)}% réussite.
+Forces : {', '.join(profile.strengths) if profile.strengths else 'en évaluation'}.
+Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}."""
+
         try:
             response = await generate_agent_response(message, context)
-        except:
-            # Fallback si Gemini échoue
-            response = self._generate_chat_response(instance, message)
-        
-        # Enregistrer réponse agent
+        except Exception:
+            response = self._generate_chat_response(profile, message)
+
         await self._add_conversation(instance.id, "agent", response)
-        
-        return response
-    
+
+        # Get relevant tips
+        tips = []
+        msg_lower = message.lower()
+        for skill_name, skill_tips in TECHNIQUE_TIPS.items():
+            label = SKILL_DEFINITIONS[skill_name]["label"].lower()
+            if label in msg_lower or skill_name in msg_lower:
+                tips.extend(get_technique_tips(skill_name, 2))
+                break
+
+        return {"agent_message": response, "tips": tips}
+
     async def get_conversation_history(
         self, user_id: UUID, limit: int = 50
     ) -> List[ConversationMessage]:
-        """Récupère l'historique de conversation"""
         instance = await self.get_or_create_instance(user_id)
-        
         result = self.supabase.table("agent_conversations")\
-            .select("*")\
-            .eq("agent_instance_id", str(instance.id))\
-            .order("created_at", desc=True)\
-            .limit(limit)\
-            .execute()
-        
-        messages = [
+            .select("*").eq("agent_instance_id", str(instance.id))\
+            .order("created_at", desc=True).limit(limit).execute()
+
+        return [
             ConversationMessage(
-                id=UUID(m["id"]),
-                agent_instance_id=UUID(m["agent_instance_id"]),
-                role=m["role"],
-                message=m["message"],
-                metadata=m["metadata"],
-                created_at=m["created_at"]
+                id=UUID(m["id"]), agent_instance_id=UUID(m["agent_instance_id"]),
+                role=m["role"], message=m["message"],
+                metadata=m.get("metadata", {}), created_at=m["created_at"],
             )
             for m in reversed(result.data)
         ]
-        
-        return messages
-    
-    # ============ Méthodes internes ============
-    
+
+    # ══════════════════════════════════════════
+    #              DASHBOARD DATA
+    # ══════════════════════════════════════════
+
+    async def get_dashboard(self, user_id: UUID) -> DashboardResponse:
+        """Get complete dashboard data in one call."""
+        instance = await self.get_or_create_instance(user_id)
+        profile = self._load_profile(instance.state)
+
+        # Build skill scores
+        skills = []
+        for skill_name, defn in SKILL_DEFINITIONS.items():
+            sd = profile.skill_vector.get_skill(skill_name)
+            skills.append(SkillScore(
+                name=skill_name,
+                label=defn["label"],
+                score=round(sd.score, 1),
+                accuracy=round(sd.accuracy_ema, 3),
+                speed_avg_ms=round(sd.speed_avg_ms, 0),
+                attempts=sd.attempts,
+                streak=sd.streak,
+                difficulty_mastered=sd.difficulty_mastered,
+                is_automated=detect_automatization(sd),
+                is_plateau=detect_plateau(sd.score_history),
+            ))
+
+        # Sort by defined order
+        skills.sort(key=lambda s: SKILL_DEFINITIONS.get(s.name, {}).get("order", 99))
+
+        # Get history for graph
+        history = await self._get_skill_history(user_id)
+
+        # Generate agent message
+        agent_msg = self._generate_dashboard_message(profile)
+
+        accuracy = (profile.total_correct / max(1, profile.total_exercises)) * 100
+
+        return DashboardResponse(
+            global_level=round(profile.global_level, 1),
+            total_exercises=profile.total_exercises,
+            total_correct=profile.total_correct,
+            accuracy=round(accuracy, 1),
+            skills=skills,
+            strengths=profile.strengths,
+            weaknesses=profile.weaknesses,
+            focus_areas=profile.focus_areas,
+            error_breakdown=profile.error_counts,
+            history=history,
+            agent_message=agent_msg,
+            diagnostic_completed=profile.diagnostic_completed,
+        )
+
+    async def _get_skill_history(self, user_id: UUID) -> List[SkillSnapshotResponse]:
+        """Get last 30 days of skill snapshots."""
+        try:
+            thirty_days_ago = (
+                datetime.now(timezone.utc) - timedelta(days=30)
+            ).strftime("%Y-%m-%d")
+
+            result = self.supabase.table("skill_snapshots")\
+                .select("*")\
+                .eq("user_id", str(user_id))\
+                .gte("snapshot_date", thirty_days_ago)\
+                .order("snapshot_date")\
+                .execute()
+
+            return [
+                SkillSnapshotResponse(
+                    date=s["snapshot_date"],
+                    global_level=s["global_level"],
+                    skill_scores=s.get("skill_vector", {}),
+                )
+                for s in result.data
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to get skill history: {e}")
+            return []
+
+    # ══════════════════════════════════════════
+    #            INTERNAL METHODS
+    # ══════════════════════════════════════════
+
     async def _add_conversation(
         self, agent_instance_id: UUID, role: str, message: str, metadata: dict = None
     ):
-        """Ajoute un message à la conversation"""
         data = {
             "agent_instance_id": str(agent_instance_id),
-            "role": role,
-            "message": message,
-            "metadata": metadata or {}
+            "role": role, "message": message, "metadata": metadata or {},
         }
         self.supabase.table("agent_conversations").insert(data).execute()
-    
+
     async def _get_recent_performance(
         self, agent_instance_id: UUID, limit: int = 10
     ) -> List[dict]:
-        """Récupère les performances récentes"""
         result = self.supabase.table("exercise_performances")\
-            .select("*")\
-            .eq("agent_instance_id", str(agent_instance_id))\
-            .order("created_at", desc=True)\
-            .limit(limit)\
-            .execute()
-        
+            .select("*").eq("agent_instance_id", str(agent_instance_id))\
+            .order("created_at", desc=True).limit(limit).execute()
         return result.data
-    
-    async def _update_agent_state(
-        self, instance: AgentInstance, is_correct: bool,
-        exercise_type: str, difficulty: int
+
+    async def _store_error_pattern(
+        self, user_id: UUID, skill: str, error_type: str,
+        question: str, correct_answer: str, user_answer: str,
+        time_taken_ms: Optional[int],
     ):
-        """Met à jour l'état de l'agent après un exercice"""
-        state = instance.state
-        if is_correct:
-            state.total_exercises += 1
-        state.last_difficulty = difficulty
-        
-        # Compléter le diagnostic après 10 exercices
-        updates = {"state": state.dict()}
-        if not instance.diagnostic_completed and state.total_exercises >= 10:
-            updates["diagnostic_completed"] = True
-            updates["current_level"] = self._calculate_level(state)
-            instance.diagnostic_completed = True
-            instance.current_level = updates["current_level"]
-            
-            # Message de félicitation
-            await self._add_conversation(
-                instance.id, 
-                "agent",
-                f"🎯 Diagnostic terminé ! Ton niveau est {instance.current_level}/5. Je vais maintenant adapter les exercices pour te faire progresser. C'est parti ! 💪"
-            )
-        
-        # Analyser forces/faiblesses
-        if is_correct and difficulty >= 3:
-            if exercise_type not in state.strengths:
-                state.strengths.append(exercise_type)
-            if exercise_type in state.weaknesses:
-                state.weaknesses.remove(exercise_type)
-        elif not is_correct:
-            if exercise_type not in state.weaknesses:
-                state.weaknesses.append(exercise_type)
-        
-        # Mise à jour DB
-        self.supabase.table("agent_instances")\
-            .update(updates)\
-            .eq("id", str(instance.id))\
-            .execute()
-    
-    def _calculate_level(self, state: AgentState) -> int:
-        """Calcule le niveau basé sur les performances du diagnostic"""
-        if state.last_difficulty >= 3 and not state.weaknesses:
-            return 4
-        elif state.last_difficulty >= 2 and len(state.weaknesses) <= 1:
-            return 3
-        elif len(state.weaknesses) <= 2:
-            return 2
-        else:
-            return 1
-    
-    def _select_exercise_params(
-        self, instance: AgentInstance, recent_perf: List[dict]
-    ) -> Tuple[str, int]:
-        """Sélectionne le type d'exercice et la difficulté"""
-        # Types disponibles
-        exercise_types = ["addition", "multiplication", "soustraction", "division"]
-        
-        # Si diagnostic pas fini, varier
-        if not instance.diagnostic_completed:
-            return random.choice(exercise_types), random.randint(1, 3)
-        
-        # Sinon, focus sur faiblesses
-        if instance.state.weaknesses:
-            return random.choice(instance.state.weaknesses), 2
-        
-        # Ou progression normale
-        difficulty = min(instance.state.last_difficulty + 1, 5)
-        return random.choice(exercise_types), difficulty
-    
-    def _generate_question(self, exercise_type: str, difficulty: int) -> Tuple[str, str]:
-        """Génère une question et sa réponse"""
-        if exercise_type == "addition":
-            a = random.randint(10 * difficulty, 50 * difficulty)
-            b = random.randint(10 * difficulty, 50 * difficulty)
-            return f"{a} + {b} = ?", str(a + b)
-        
-        elif exercise_type == "multiplication":
-            a = random.randint(2, 12 + difficulty)
-            b = random.randint(2, 12 + difficulty)
-            return f"{a} × {b} = ?", str(a * b)
-        
-        elif exercise_type == "soustraction":
-            a = random.randint(20 * difficulty, 100 * difficulty)
-            b = random.randint(10 * difficulty, a)
-            return f"{a} − {b} = ?", str(a - b)
-        
-        elif exercise_type == "division":
-            b = random.randint(2, 12)
-            result = random.randint(2, 20 * difficulty)
-            a = b * result
-            return f"{a} ÷ {b} = ?", str(result)
-        
-        return "1 + 1 = ?", "2"
-    
-    # Note: Tips sont maintenant générés par Gemini dans generate_next_exercise()
-    
-    def _get_intro_message(self, instance: AgentInstance, exercise_type: str) -> Optional[str]:
-        """Message d'intro contextualisé de l'agent"""
-        if instance.state.total_exercises == 0:
-            return "Première question ! Prends ton temps. 🎯"
-        
-        if instance.state.total_exercises % 5 == 0:
-            return f"Question {instance.state.total_exercises + 1}. Tu assures ! 🚀"
-        
-        return None
-    
-    def _check_answer(self, user_answer: str, correct_answer: str) -> bool:
-        """Vérifie si la réponse est correcte"""
         try:
-            return float(user_answer.strip()) == float(correct_answer.strip())
-        except:
+            self.supabase.table("error_patterns").insert({
+                "user_id": str(user_id),
+                "skill": skill,
+                "error_type": error_type,
+                "question": question,
+                "correct_answer": correct_answer,
+                "user_answer": user_answer,
+                "time_taken_ms": time_taken_ms,
+            }).execute()
+        except Exception as e:
+            logger.warning(f"Failed to store error pattern: {e}")
+
+    async def _update_spaced_repetition(
+        self, user_id: UUID, skill: str, sub_skill: Optional[str],
+        question: str, correct_answer: str, difficulty: int,
+        is_correct: bool, time_taken_ms: Optional[int],
+    ):
+        """Update or create spaced repetition item."""
+        try:
+            expected_ms = EXPECTED_TIME_MS.get(difficulty, 10000)
+            quality = compute_sr_quality(is_correct, time_taken_ms, expected_ms)
+
+            # Check if item exists
+            result = self.supabase.table("spaced_repetition_queue")\
+                .select("*")\
+                .eq("user_id", str(user_id))\
+                .eq("question", question)\
+                .limit(1)\
+                .execute()
+
+            if result.data:
+                item_data = result.data[0]
+                sr = SRItem(
+                    repetitions=item_data["repetitions"],
+                    ease_factor=item_data["ease_factor"],
+                    interval_days=item_data["interval_days"],
+                )
+                sr.update(quality)
+
+                self.supabase.table("spaced_repetition_queue")\
+                    .update({
+                        "repetitions": sr.repetitions,
+                        "ease_factor": sr.ease_factor,
+                        "interval_days": sr.interval_days,
+                        "next_review": sr.next_review.isoformat() if sr.next_review else None,
+                        "last_reviewed": datetime.now(timezone.utc).isoformat(),
+                        "total_attempts": item_data["total_attempts"] + 1,
+                        "total_correct": item_data["total_correct"] + (1 if is_correct else 0),
+                        "avg_time_ms": time_taken_ms,
+                    })\
+                    .eq("id", item_data["id"])\
+                    .execute()
+            elif not is_correct:
+                # Only add to SR queue on mistakes
+                sr = SRItem()
+                sr.update(quality)
+                self.supabase.table("spaced_repetition_queue").insert({
+                    "user_id": str(user_id),
+                    "skill": skill,
+                    "sub_skill": sub_skill,
+                    "question": question,
+                    "correct_answer": correct_answer,
+                    "difficulty": difficulty,
+                    "repetitions": sr.repetitions,
+                    "ease_factor": sr.ease_factor,
+                    "interval_days": sr.interval_days,
+                    "next_review": sr.next_review.isoformat() if sr.next_review else None,
+                    "total_attempts": 1,
+                    "total_correct": 0,
+                }).execute()
+        except Exception as e:
+            logger.warning(f"SR update failed: {e}")
+
+    async def _save_daily_snapshot(self, user_id: UUID, profile: UserCognitiveProfile):
+        """Save or update daily skill snapshot for graphs."""
+        try:
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            scores = profile.skill_vector.get_scores()
+
+            self.supabase.table("skill_snapshots").upsert({
+                "user_id": str(user_id),
+                "snapshot_date": today,
+                "global_level": round(profile.global_level),
+                "skill_vector": scores,
+                "total_exercises": profile.total_exercises,
+            }, on_conflict="user_id,snapshot_date").execute()
+        except Exception as e:
+            logger.warning(f"Snapshot save failed: {e}")
+
+    def _check_answer(
+        self, user_answer: str, correct_answer: str, skill: str
+    ) -> bool:
+        """Check if answer is correct, with tolerance for estimation."""
+        try:
+            user_val = float(user_answer.strip().replace(",", "."))
+            correct_val = float(correct_answer.strip().replace(",", "."))
+
+            # Exact match for most skills
+            if skill != "estimation":
+                return user_val == correct_val
+
+            # 10% tolerance for estimation
+            tolerance = max(abs(correct_val) * 0.10, 1)
+            return abs(user_val - correct_val) <= tolerance
+        except (ValueError, TypeError):
             return False
 
-    def _get_quick_tip(self, exercise_type: str, difficulty: int) -> Optional[str]:
-        """Retourne un tip local rapide pour éviter les appels IA bloquants."""
-        if difficulty < 2:
-            return None
+    def _calculate_points(
+        self, is_correct: bool, difficulty: int, time_ms: Optional[int]
+    ) -> int:
+        if not is_correct:
+            return 0
+        base = difficulty * 10
+        if time_ms and time_ms < 3000:
+            return int(base * 2.0)
+        elif time_ms and time_ms < 5000:
+            return int(base * 1.5)
+        return base
 
-        tips = {
-            "addition": "Additionne d'abord les dizaines, puis les unités.",
-            "soustraction": "Commence par les dizaines puis ajuste avec les unités.",
-            "multiplication": "Décompose en produits simples (×10, ×5, ×2).",
-            "division": "Cherche le multiple le plus proche puis ajuste.",
-        }
-        return tips.get(exercise_type)
+    def _get_intro_message(
+        self, profile: UserCognitiveProfile, skill_name: str, difficulty: int
+    ) -> Optional[str]:
+        label = SKILL_DEFINITIONS[skill_name]["label"]
 
-    def _get_quick_feedback(self, is_correct: bool, exercise_type: str, difficulty: int) -> str:
-        """Feedback local instantané après soumission."""
+        if profile.total_exercises == 0:
+            return f"Première question ! On commence avec {label}. Prends ton temps. 🎯"
+        if profile.total_exercises % 10 == 0:
+            return f"Exercice {profile.total_exercises + 1}. Tu assures ! 🚀"
+        if skill_name in profile.weaknesses:
+            return f"On travaille {label} — c'est un point à améliorer. 💪"
+
+        # Plateau message
+        sd = profile.skill_vector.get_skill(skill_name)
+        if detect_plateau(sd.score_history):
+            return f"Changement de rythme sur {label} pour relancer ta progression ! ⚡"
+
+        return None
+
+    def _get_feedback(
+        self, is_correct: bool, skill: str, difficulty: int,
+        error_type: Optional[str], plateau_msg: Optional[str],
+    ) -> str:
+        label = SKILL_DEFINITIONS.get(skill, {}).get("label", skill)
+
         if is_correct:
-            if difficulty >= 3:
-                return "Excellent, continue comme ça. 🚀"
-            return "Correct. ✅"
-        return "Incorrect, on enchaîne pour progresser. 💪"
-    
-    # Note: Feedback est maintenant généré par Gemini dans submit_answer()
-    
-    def _generate_chat_response(self, instance: AgentInstance, message: str) -> str:
-        """Génère une réponse conversationnelle (simple pour MVP)"""
-        message_lower = message.lower()
-        
-        if any(word in message_lower for word in ["aide", "help", "comment"]):
-            return "Je suis là pour t'aider ! Continue les exercices et je m'adapterai à ton niveau. Tu peux me poser des questions entre deux exercices. 💪"
-        
-        if any(word in message_lower for word in ["niveau", "stats", "progression"]):
-            return f"Tu as fait {instance.state.total_exercises} exercices. Continue comme ça ! 📊"
-        
-        if any(word in message_lower for word in ["merci", "thanks"]):
+            if difficulty >= 4:
+                return f"Excellent ! {label} de niveau expert ! 🚀"
+            elif difficulty >= 3:
+                return "Très bien, continue ! ✅"
+            return "Correct ✅"
+
+        error_hints = {
+            "table_error": "Revois cette table — la pratique régulière aide à l'automatiser.",
+            "carry_error": "Attention aux retenues ! Vérifie chaque étape.",
+            "inattention": "Presque ! Prends une seconde de plus pour vérifier.",
+            "procedure_error": "Essaie de décomposer le calcul en étapes plus simples.",
+            "timeout": "Pas de réponse ? Commence par estimer l'ordre de grandeur.",
+        }
+        hint = error_hints.get(error_type, "")
+        base = f"Incorrect. {hint}" if hint else "Incorrect, on continue ! 💪"
+
+        if plateau_msg:
+            base += f"\n{plateau_msg}"
+
+        return base
+
+    def _generate_dashboard_message(self, profile: UserCognitiveProfile) -> str:
+        if profile.total_exercises == 0:
+            return "Bienvenue ! Lance ton premier exercice pour commencer le diagnostic. 🎯"
+
+        if not profile.diagnostic_completed:
+            remaining = max(0, 10 - profile.total_exercises)
+            return f"Diagnostic en cours... encore {remaining} exercice{'s' if remaining > 1 else ''} ! 📊"
+
+        if profile.weaknesses:
+            weak_labels = [
+                SKILL_DEFINITIONS.get(w, {}).get("label", w)
+                for w in profile.weaknesses[:2]
+            ]
+            return (
+                f"Niveau {round(profile.global_level)}/100. "
+                f"On va travailler ensemble sur : {', '.join(weak_labels)}. 💪"
+            )
+
+        if profile.global_level >= 80:
+            return f"Niveau {round(profile.global_level)}/100. Tu es en mode expert ! 🏆"
+        elif profile.global_level >= 50:
+            return f"Niveau {round(profile.global_level)}/100. Belle progression, continue ! 📈"
+        else:
+            return f"Niveau {round(profile.global_level)}/100. Chaque exercice te fait progresser ! 🚀"
+
+    def _generate_chat_response(
+        self, profile: UserCognitiveProfile, message: str,
+    ) -> str:
+        """Fallback chat when Gemini is unavailable."""
+        msg = message.lower()
+        if any(w in msg for w in ["aide", "help", "comment", "technique", "astuce"]):
+            return (
+                "Je suis là pour t'aider ! "
+                "Pose-moi une question sur un calcul spécifique "
+                "et je te donnerai toutes les techniques. 💡"
+            )
+        if any(w in msg for w in ["niveau", "stats", "score", "progression"]):
+            scores = profile.skill_vector.get_scores()
+            top_3 = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:3]
+            return (
+                f"Ton niveau global est {round(profile.global_level)}/100. "
+                f"Tes meilleurs scores : "
+                + ", ".join(f'{SKILL_DEFINITIONS[k]["label"]}: {v}' for k, v in top_3)
+                + ". 📊"
+            )
+        if any(w in msg for w in ["table", "multiplication"]):
+            tips = get_technique_tips("tables_1_20", 3)
+            return "Voici des astuces pour les tables :\n" + "\n".join(tips)
+        if any(w in msg for w in ["merci", "thanks"]):
             return "De rien ! Prêt·e pour la suite ? 🚀"
-        
-        return "Je suis là pour t'accompagner ! Lance un exercice quand tu veux. 🎯"
+        return (
+            "Je suis ton coach ! Pose-moi des questions sur le calcul mental "
+            "ou lance un exercice. 🎯"
+        )
 
 
-# Singleton
+# ══════════════════════════════════════════
+#              SINGLETON
+# ══════════════════════════════════════════
+
 _agent_service = None
+
 
 def get_agent_service() -> AgentService:
     global _agent_service

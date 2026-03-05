@@ -9,7 +9,31 @@ apt update
 apt install -y python3-venv python3-pip
 ```
 
-## 1. Backend (FastAPI)
+## 1. Nettoyage des processus zombies (AVANT chaque redémarrage)
+
+Avant de relancer les serveurs, **toujours** tuer les éventuels processus restés actifs d'une session précédente. Sans cette étape, les ports peuvent être occupés et le site ne s'affichera pas.
+
+```bash
+# Tuer les anciens processus Next.js et Uvicorn
+pkill -f "next-server" 2>/dev/null
+pkill -f uvicorn 2>/dev/null
+
+# Attendre que les ports se libèrent
+sleep 2
+
+# Vérifier que les ports 3000 et 8000 sont bien libres
+ss -tlnp | grep -E '3000|8000' || echo "Ports libérés ✓"
+```
+
+> ⚠️ **Si un port est toujours occupé** après le `pkill`, forcer avec :
+> ```bash
+> lsof -i :3000  # noter le PID
+> kill -9 <PID>
+> ```
+
+---
+
+## 2. Backend (FastAPI)
 
 ```bash
 cd /docker/openclaw-sosi/data/.openclaw/workspace-mathcoach/mathcoach-pilotboost/backend
@@ -29,7 +53,7 @@ python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Le backend sera accessible sur **http://localhost:8000**
 
-## 2. Frontend (Next.js)
+## 3. Frontend (Next.js)
 
 Dans un **nouveau terminal** :
 
@@ -45,7 +69,7 @@ npm run dev
 
 Le frontend sera accessible sur **http://localhost:3000**
 
-## 3. Vérification
+## 4. Vérification
 
 - Backend health : `curl http://localhost:8000/health`
 - Backend docs : http://localhost:8000/docs

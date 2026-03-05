@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import FloatingMenuBar from "@/components/FloatingMenuBar";
 
 export const metadata: Metadata = {
   title: "MathCoach by PilotBoost",
@@ -13,8 +14,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="fr">
-      <body className="antialiased">
-        {children}
+      <body className="antialiased min-h-screen bg-[#F8FAFC]">
+        <FloatingMenuBar />
+        <main className="pt-24 pb-2 px-6 max-w-6xl mx-auto">{children}</main>
       </body>
     </html>
   );
