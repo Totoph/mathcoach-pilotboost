@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
 async function getAuthHeaders() {
   const { data: { session } } = await supabase.auth.getSession();
@@ -19,7 +19,7 @@ export const api = {
   // Agent IA
   async initAgent() {
     const headers = await getAuthHeaders();
-    const res = await fetch(`${API_URL}/api/v1/agent/init`, {
+    const res = await fetch(`${API_BASE}/api/v1/agent/init`, {
       method: 'POST',
       headers,
     });
@@ -30,7 +30,7 @@ export const api = {
   
   async getAgentState() {
     const headers = await getAuthHeaders();
-    const res = await fetch(`${API_URL}/api/v1/agent/state`, {
+    const res = await fetch(`${API_BASE}/api/v1/agent/state`, {
       headers,
     });
     
@@ -40,7 +40,7 @@ export const api = {
   
   async getNextExercise() {
     const headers = await getAuthHeaders();
-    const res = await fetch(`${API_URL}/api/v1/agent/next-exercise`, {
+    const res = await fetch(`${API_BASE}/api/v1/agent/next-exercise`, {
       method: 'POST',
       headers,
       body: JSON.stringify({}),
@@ -56,7 +56,7 @@ export const api = {
     timeTakenMs: number | null,
   ) {
     const headers = await getAuthHeaders();
-    const res = await fetch(`${API_URL}/api/v1/agent/submit-answer`, {
+    const res = await fetch(`${API_BASE}/api/v1/agent/submit-answer`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -66,13 +66,22 @@ export const api = {
       }),
     });
     
-    if (!res.ok) throw new Error('Failed to submit answer');
+    if (!res.ok) {
+      let message = 'Failed to submit answer';
+      try {
+        const data = await res.json();
+        if (data?.detail) message = data.detail;
+      } catch {
+        message = `Failed to submit answer (${res.status})`;
+      }
+      throw new Error(message);
+    }
     return res.json();
   },
   
   async chat(message: string) {
     const headers = await getAuthHeaders();
-    const res = await fetch(`${API_URL}/api/v1/agent/chat`, {
+    const res = await fetch(`${API_BASE}/api/v1/agent/chat`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ message }),
@@ -84,7 +93,7 @@ export const api = {
   
   async getConversationHistory(limit: number = 50) {
     const headers = await getAuthHeaders();
-    const res = await fetch(`${API_URL}/api/v1/agent/history?limit=${limit}`, {
+    const res = await fetch(`${API_BASE}/api/v1/agent/history?limit=${limit}`, {
       headers,
     });
     

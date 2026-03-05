@@ -32,8 +32,9 @@ export default function TrainPage() {
   const [chatInput, setChatInput] = useState("");
   const [sessionStartTime, setSessionStartTime] = useState(Date.now());
   const [exerciseStartTime, setExerciseStartTime] = useState(Date.now());
-  const [showResult, setShowResult] = useState(false);
-  const [lastResult, setLastResult] = useState<any>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [answerState, setAnswerState] = useState<"idle" | "correct" | "wrong">("idle");
+  const [shakeInput, setShakeInput] = useState(false);
   const [agentState, setAgentState] = useState<any>(null);
   const [totalExercises, setTotalExercises] = useState(0);
   const [diagnosticCompleted, setDiagnosticCompleted] = useState(false);
@@ -84,21 +85,18 @@ export default function TrainPage() {
       setCurrentExercise(exercise);
       setExerciseStartTime(Date.now());
       setUserInput("");
-      setShowResult(false);
-
-      // Ajouter le message d'intro de l'agent
-      if (exercise.agent_intro) {
-        addMessage("agent", exercise.agent_intro);
-      }
+      setAnswerState("idle");
+      setShakeInput(false);
     } catch (err) {
       console.error("Failed to load exercise:", err);
     }
   }
 
   async function handleSubmitAnswer() {
-    if (!currentExercise || !userInput.trim()) return;
+    if (!currentExercise || !userInput.trim() || isSubmitting) return;
 
     const timeTaken = Date.now() - exerciseStartTime;
+    setIsSubmitting(true);
 
     try {
       const result = await api.submitAnswer(
@@ -107,33 +105,40 @@ export default function TrainPage() {
         timeTaken,
       );
 
-      // Ajouter le feedback de l'agent
-      addMessage("agent", result.agent_feedback);
+      if (result.is_correct) {
+        setAnswerState("correct");
 
-      setLastResult(result);
-      setShowResult(true);
-      
-      // Incrémenter le compteur et recharger l'état si diagnostic terminé
-      const newTotal = totalExercises + 1;
-      setTotalExercises(newTotal);
-      
-      if (!diagnosticCompleted && newTotal >= 10) {
-        setDiagnosticCompleted(true);
-        // Recharger l'état complet pour avoir le niveau
-        try {
-          const state = await api.getAgentState();
-          setAgentState(state.instance);
-        } catch (err) {
-          console.error("Failed to reload agent state:", err);
+        // Incrémenter le compteur uniquement sur une bonne réponse
+        const newTotal = totalExercises + 1;
+        setTotalExercises(newTotal);
+
+        if (!diagnosticCompleted && newTotal >= 10) {
+          setDiagnosticCompleted(true);
+          try {
+            const state = await api.getAgentState();
+            setAgentState(state.instance);
+          } catch (err) {
+            console.error("Failed to reload agent state:", err);
+          }
         }
-      }
 
-      // Auto-charger le prochain exercice après 2s
-      setTimeout(() => {
-        loadNextExercise();
-      }, 2000);
+        setTimeout(() => {
+          loadNextExercise();
+        }, 150);
+      } else {
+        setAnswerState("wrong");
+        setShakeInput(true);
+
+        setTimeout(() => {
+          setShakeInput(false);
+          setAnswerState("idle");
+          setUserInput("");
+        }, 220);
+      }
     } catch (err) {
       console.error("Failed to submit answer:", err);
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -221,73 +226,8 @@ export default function TrainPage() {
 
       {/* Main: Exercise + Chat */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Exercise Area (Left - 60%) */}
-        <div className="w-[60%] flex flex-col items-center justify-center p-8 relative">
-          {currentExercise && (
-            <>
-              {/* Question */}
-              <div className="text-5xl font-bold mb-8 text-center">
-                {currentExercise.question}
-              </div>
-
-              {/* User Input Display */}
-              <div className="mb-8 min-w-[300px]">
-                <div className="bg-white/10 border border-white/20 rounded-xl px-6 py-4 text-center text-3xl font-mono min-h-[60px] flex items-center justify-center">
-                  {userInput || "_"}
-                </div>
-              </div>
-
-              {/* Numpad */}
-              <div className="grid grid-cols-3 gap-3 mb-8">
-                {["7", "8", "9", "4", "5", "6", "1", "2", "3", "←", "0", "✓"].map((key) => (
-                  <button
-                    key={key}
-                    onClick={() => handleNumpadClick(key)}
-                    className={`w-20 h-20 rounded-xl font-bold text-2xl transition ${
-                      key === "✓"
-                        ? "bg-gradient-to-r from-green-600 to-green-700 hover:shadow-xl"
-                        : key === "←"
-                        ? "bg-red-600/80 hover:bg-red-600"
-                        : "bg-white/10 hover:bg-white/20"
-                    }`}
-                  >
-                    {key}
-                  </button>
-                ))}
-              </div>
-
-              {/* Tip */}
-              {currentExercise.tip && (
-                <div className="absolute bottom-8 left-8 right-8 bg-blue-500/20 border border-blue-500/50 rounded-lg p-3 text-center">
-                  💡 <span className="font-medium">Tip:</span> {currentExercise.tip}
-                </div>
-              )}
-
-              {/* Result Overlay */}
-              {showResult && lastResult && (
-                <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
-                  <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-8 text-center max-w-md border border-white/20">
-                    <div className="text-6xl mb-4">
-                      {lastResult.is_correct ? "🎉" : "💪"}
-                    </div>
-                    <div className="text-2xl font-bold mb-2">
-                      {lastResult.is_correct ? "Bravo !" : "Presque !"}
-                    </div>
-                    <div className="text-gray-300 mb-4">
-                      Réponse : {lastResult.correct_answer}
-                    </div>
-                    <div className="text-sm text-gray-400">
-                      Prochain exercice dans un instant...
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Chat Area (Right - 40%) */}
-        <div className="w-[40%] bg-slate-800/50 border-l border-white/10 flex flex-col">
+        {/* Chat Area (Left - 20%) */}
+        <div className="w-[20%] bg-slate-800/50 border-r border-white/10 flex flex-col">
           <div className="p-4 border-b border-white/10">
             <h2 className="font-bold flex items-center gap-2">
               💬 Coach IA
@@ -333,6 +273,63 @@ export default function TrainPage() {
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Exercise Area (Right - 80%) */}
+        <div className="w-[80%] flex flex-col items-center justify-center p-8 relative">
+          {currentExercise && (
+            <>
+              {/* Question */}
+              <div className="text-5xl font-bold mb-8 text-center">
+                {currentExercise.question}
+              </div>
+
+              {/* User Input Display */}
+              <div className="mb-8 min-w-[300px]">
+                <div className="bg-white/10 border border-white/20 rounded-xl px-6 py-4 text-center text-3xl font-mono min-h-[60px] flex items-center justify-center">
+                  <div
+                    className={`${
+                      answerState === "correct"
+                        ? "text-green-400"
+                        : answerState === "wrong"
+                        ? "text-red-400"
+                        : "text-white"
+                    } ${shakeInput ? "animate-shake-x" : ""}`}
+                  >
+                    {userInput || "_"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Numpad */}
+              <div className="grid grid-cols-3 gap-3 mb-8">
+                {["7", "8", "9", "4", "5", "6", "1", "2", "3", "←", "0", "✓"].map((key) => (
+                  <button
+                    key={key}
+                    onClick={() => handleNumpadClick(key)}
+                    className={`w-20 h-20 rounded-xl font-bold text-2xl transition ${
+                      key === "✓"
+                        ? "bg-gradient-to-r from-green-600 to-green-700 hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                        : key === "←"
+                        ? "bg-red-600/80 hover:bg-red-600"
+                        : "bg-white/10 hover:bg-white/20"
+                    }`}
+                    disabled={key === "✓" && (isSubmitting || !userInput.trim())}
+                  >
+                    {key}
+                  </button>
+                ))}
+              </div>
+
+              {/* Tip */}
+              {currentExercise.tip && (
+                <div className="absolute bottom-8 left-8 right-8 bg-blue-500/20 border border-blue-500/50 rounded-lg p-3 text-center">
+                  💡 <span className="font-medium">Tip:</span> {currentExercise.tip}
+                </div>
+              )}
+
+            </>
+          )}
         </div>
       </div>
     </div>

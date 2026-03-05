@@ -111,12 +111,15 @@ async def submit_answer(
     
     user_id = UUID(current_user["id"])
     
-    result = await agent_service.submit_answer(
-        user_id=user_id,
-        exercise_id=UUID(request.exercise_id),
-        user_answer=request.user_answer,
-        time_taken_ms=request.time_taken_ms,
-    )
+    try:
+        result = await agent_service.submit_answer(
+            user_id=user_id,
+            exercise_id=UUID(request.exercise_id),
+            user_answer=request.user_answer,
+            time_taken_ms=request.time_taken_ms,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     
     return result
 

@@ -9,7 +9,7 @@ _exercise_cache: dict[str, dict] = {}
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime, timedelta
 from app.core.supabase import get_supabase_admin
-from app.core.gemini import generate_agent_response, generate_feedback, generate_tip
+from app.core.gemini import generate_agent_response
 from app.schemas.agent import (
     AgentInstance, AgentState, ConversationMessage,
     ExercisePerformance, NextExerciseResponse, SubmitAnswerResponse
@@ -83,13 +83,8 @@ class AgentService:
         # Générer la question
         question, correct_answer = self._generate_question(exercise_type, difficulty)
         
-        # Générer un tip avec Gemini (async)
-        tip = None
-        if difficulty >= 2:
-            try:
-                tip = await generate_tip(exercise_type, difficulty)
-            except:
-                tip = None  # Fallback si Gemini échoue
+        # Tip local instantané (évite la latence Gemini sur chaque exercice)
+        tip = self._get_quick_tip(exercise_type, difficulty)
         
         # Message d'intro de l'agent (contextualisé)
         agent_intro = self._get_intro_message(instance, exercise_type)
@@ -127,7 +122,7 @@ class AgentService:
         instance = await self.get_or_create_instance(user_id)
         
         # Retrieve exercise data from server-side cache
-        cached = _exercise_cache.pop(str(exercise_id), None)
+        cached = _exercise_cache.get(str(exercise_id))
         if not cached:
             raise ValueError(f"Exercise {exercise_id} not found in cache (expired or invalid)")
         
@@ -139,6 +134,10 @@ class AgentService:
         
         # Vérifier la réponse
         is_correct = self._check_answer(user_answer, correct_answer)
+
+        # Consommer l'exercice seulement quand la réponse est correcte
+        if is_correct:
+            _exercise_cache.pop(str(exercise_id), None)
         
         # Enregistrer la performance
         perf_data = {
@@ -157,17 +156,8 @@ class AgentService:
         # Mettre à jour l'état de l'agent
         await self._update_agent_state(instance, is_correct, exercise_type, difficulty)
         
-        # Générer feedback personnalisé avec Gemini
-        try:
-            agent_feedback = await generate_feedback(
-                is_correct, exercise_type, difficulty, time_taken_ms
-            )
-        except:
-            # Fallback si Gemini échoue
-            agent_feedback = "Bravo ! 🎉" if is_correct else "Presque ! Continue comme ça. 💪"
-        
-        # Ajouter à la conversation
-        await self._add_conversation(instance.id, "agent", agent_feedback)
+        # Feedback local instantané (évite la latence Gemini sur chaque soumission)
+        agent_feedback = self._get_quick_feedback(is_correct, exercise_type, difficulty)
         
         points_earned = difficulty * 10 if is_correct else 0
         
@@ -265,7 +255,8 @@ class AgentService:
     ):
         """Met à jour l'état de l'agent après un exercice"""
         state = instance.state
-        state.total_exercises += 1
+        if is_correct:
+            state.total_exercises += 1
         state.last_difficulty = difficulty
         
         # Compléter le diagnostic après 10 exercices
@@ -372,6 +363,27 @@ class AgentService:
             return float(user_answer.strip()) == float(correct_answer.strip())
         except:
             return False
+
+    def _get_quick_tip(self, exercise_type: str, difficulty: int) -> Optional[str]:
+        """Retourne un tip local rapide pour éviter les appels IA bloquants."""
+        if difficulty < 2:
+            return None
+
+        tips = {
+            "addition": "Additionne d'abord les dizaines, puis les unités.",
+            "soustraction": "Commence par les dizaines puis ajuste avec les unités.",
+            "multiplication": "Décompose en produits simples (×10, ×5, ×2).",
+            "division": "Cherche le multiple le plus proche puis ajuste.",
+        }
+        return tips.get(exercise_type)
+
+    def _get_quick_feedback(self, is_correct: bool, exercise_type: str, difficulty: int) -> str:
+        """Feedback local instantané après soumission."""
+        if is_correct:
+            if difficulty >= 3:
+                return "Excellent, continue comme ça. 🚀"
+            return "Correct. ✅"
+        return "Incorrect, on enchaîne pour progresser. 💪"
     
     # Note: Feedback est maintenant généré par Gemini dans submit_answer()
     
