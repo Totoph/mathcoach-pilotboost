@@ -66,6 +66,7 @@ class AgentState(BaseModel):
     })
     training_mode: Optional[str] = None
     last_session_date: Optional[str] = None
+    pending_exercise: Optional[Dict] = None
 
 
 class AgentInstance(BaseModel):
@@ -122,6 +123,7 @@ class ChatResponse(BaseModel):
 
 class NextExerciseRequest(BaseModel):
     training_mode: Optional[str] = None  # "tables", "free", or None (agent decides)
+    operation_filter: Optional[List[str]] = None  # ["addition", "subtraction", "multiplication", "division", "advanced"]
 
 
 class NextExerciseResponse(BaseModel):
@@ -133,6 +135,35 @@ class NextExerciseResponse(BaseModel):
     tip: Optional[str] = None
     time_limit_ms: Optional[int] = None
     agent_intro: Optional[str] = None
+    correct_answer: Optional[str] = None
+
+
+class CustomSeriesRequest(BaseModel):
+    example: str  # e.g. "34-54+67-23-65"
+    count: int = 10
+
+
+class CustomSeriesResponse(BaseModel):
+    exercises: List[NextExerciseResponse]
+
+
+class SkillSeriesRequest(BaseModel):
+    skill: str  # e.g. "squares_1_30", "addition"
+    difficulty: int = 2
+    count: int = 10
+
+
+class SmartSeriesRequest(BaseModel):
+    message: str  # natural language, e.g. "donne moi des carrés"
+    count: int = 10
+
+
+class SmartSeriesResponse(BaseModel):
+    is_exercise_request: bool
+    exercises: List[NextExerciseResponse] = Field(default_factory=list)
+    chat_response: Optional[str] = None  # if it was a chat message, not an exercise request
+    description: Optional[str] = None  # what was understood
+    example_used: Optional[str] = None  # example expression if applicable
 
 
 class SubmitAnswerRequest(BaseModel):

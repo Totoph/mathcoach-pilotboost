@@ -15,6 +15,9 @@ from app.schemas.agent import (
     AgentStateResponse, ConversationHistoryResponse,
     ConversationMessage, DashboardResponse,
     SetTrainingModeRequest,
+    CustomSeriesRequest, CustomSeriesResponse,
+    SmartSeriesRequest, SmartSeriesResponse,
+    SkillSeriesRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,7 +88,7 @@ async def get_next_exercise(
     """L'agent génère le prochain exercice adapté au profil."""
     user_id = UUID(current_user["id"])
     exercise = await agent_service.generate_next_exercise(
-        user_id, training_mode=request.training_mode
+        user_id, training_mode=request.training_mode, operation_filter=request.operation_filter
     )
     return exercise
 
@@ -165,3 +168,162 @@ async def set_training_mode(
         .update({"state": state_dict}).eq("id", str(instance.id)).execute()
 
     return {"status": "ok", "mode": request.mode}
+
+
+@router.post("/generate-custom-series", response_model=CustomSeriesResponse)
+async def generate_custom_series(
+    request: CustomSeriesRequest,
+    current_user: dict = Depends(get_current_user),
+    agent_service: AgentService = Depends(get_agent_service)
+):
+    """Génère une série d'exercices similaires à l'exemple donné."""
+    from app.services.exercise_engine_v2 import generate_from_example
+    # Store exercises in cache so submit-answer can find them
+    exercises = generate_from_example(request.example, request.count)
+    responses = []
+    for ex in exercises:
+        # Cache exercise for submit-answer to use
+        from app.services.agent_service import _exercise_cache
+        _exercise_cache[ex.exercise_id] = {
+            "skill": ex.skill,
+            "sub_skill": ex.sub_skill,
+            "question": ex.question,
+            "correct_answer": ex.correct_answer,
+            "difficulty": ex.difficulty,
+            "tip": ex.tip,
+            "instance_id": None,  # Will be set on submit
+        }
+        responses.append(NextExerciseResponse(
+            exercise_id=ex.exercise_id,
+            question=ex.question,
+            exercise_type=ex.skill,
+            sub_skill=ex.sub_skill,
+            difficulty=ex.difficulty,
+            tip=ex.tip,
+            time_limit_ms=ex.time_limit_ms,
+            agent_intro=None,
+            correct_answer=ex.correct_answer,
+        ))
+    return CustomSeriesResponse(exercises=responses)
+
+
+@router.post("/generate-skill-series", response_model=CustomSeriesResponse)
+async def generate_skill_series(
+    request: SkillSeriesRequest,
+    current_user: dict = Depends(get_current_user),
+    agent_service: AgentService = Depends(get_agent_service)
+):
+    """Fast endpoint: generate exercises for a given skill+difficulty. No LLM call."""
+    from app.services.exercise_engine_v2 import generate_exercise
+    from app.services.agent_service import _exercise_cache
+
+    exercises_raw = []
+    seen = set()
+    attempts = 0
+    while len(exercises_raw) < request.count and attempts < request.count * 10:
+        attempts += 1
+        ex = generate_exercise(request.skill, request.difficulty)
+        if ex.question not in seen:
+            seen.add(ex.question)
+            exercises_raw.append(ex)
+
+    responses = []
+    for ex in exercises_raw:
+        _exercise_cache[ex.exercise_id] = {
+            "skill": ex.skill,
+            "sub_skill": ex.sub_skill,
+            "question": ex.question,
+            "correct_answer": ex.correct_answer,
+            "difficulty": ex.difficulty,
+            "tip": ex.tip,
+            "instance_id": None,
+        }
+        responses.append(NextExerciseResponse(
+            exercise_id=ex.exercise_id,
+            question=ex.question,
+            exercise_type=ex.skill,
+            sub_skill=ex.sub_skill,
+            difficulty=ex.difficulty,
+            tip=ex.tip,
+            time_limit_ms=ex.time_limit_ms,
+            agent_intro=None,
+            correct_answer=ex.correct_answer,
+        ))
+    return CustomSeriesResponse(exercises=responses)
+
+
+@router.post("/smart-series", response_model=SmartSeriesResponse)
+async def smart_series(
+    request: SmartSeriesRequest,
+    current_user: dict = Depends(get_current_user),
+    agent_service: AgentService = Depends(get_agent_service)
+):
+    """Use Gemini to interpret a natural language message and generate exercises if applicable."""
+    from app.core.gemini import parse_exercise_intent, generate_agent_response
+    from app.services.exercise_engine_v2 import generate_exercise, generate_from_example
+    from app.services.agent_service import _exercise_cache
+
+    intent = await parse_exercise_intent(request.message)
+
+    if not intent.get("is_exercise_request"):
+        # Not an exercise request — get a chat response
+        chat_resp = await generate_agent_response(request.message)
+        return SmartSeriesResponse(
+            is_exercise_request=False,
+            chat_response=chat_resp,
+            description=None,
+        )
+
+    # It's an exercise request — generate exercises
+    example = intent.get("example")
+    skill = intent.get("skill")
+    difficulty = intent.get("difficulty") or 2
+    description = intent.get("description") or "Série personnalisée"
+
+    exercises_raw = []
+    example_used = example
+
+    if example:
+        # User gave a concrete expression — use generate_from_example
+        exercises_raw = generate_from_example(example, request.count)
+    elif skill:
+        # Generate exercises for the specified skill
+        seen_questions = set()
+        attempts = 0
+        while len(exercises_raw) < request.count and attempts < request.count * 10:
+            attempts += 1
+            ex = generate_exercise(skill, difficulty)
+            if ex.question not in seen_questions:
+                seen_questions.add(ex.question)
+                exercises_raw.append(ex)
+
+    # Convert to response and cache
+    responses = []
+    for ex in exercises_raw:
+        _exercise_cache[ex.exercise_id] = {
+            "skill": ex.skill,
+            "sub_skill": ex.sub_skill,
+            "question": ex.question,
+            "correct_answer": ex.correct_answer,
+            "difficulty": ex.difficulty,
+            "tip": ex.tip,
+            "instance_id": None,
+        }
+        responses.append(NextExerciseResponse(
+            exercise_id=ex.exercise_id,
+            question=ex.question,
+            exercise_type=ex.skill,
+            sub_skill=ex.sub_skill,
+            difficulty=ex.difficulty,
+            tip=ex.tip,
+            time_limit_ms=ex.time_limit_ms,
+            agent_intro=None,
+            correct_answer=ex.correct_answer,
+        ))
+
+    return SmartSeriesResponse(
+        is_exercise_request=True,
+        exercises=responses,
+        description=description,
+        example_used=example_used,
+    )

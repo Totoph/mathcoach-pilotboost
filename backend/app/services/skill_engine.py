@@ -582,20 +582,28 @@ def select_next_difficulty(skill: SkillData) -> int:
 def select_next_skill(
     profile: UserCognitiveProfile,
     training_mode: Optional[str] = None,
+    operation_filter: Optional[list] = None,
 ) -> tuple[str, Optional[str]]:
     """
     Select which skill to practice next using smart selection.
     
     Algorithm:
-    1. If training_mode = "tables" → always tables_1_20
-    2. 30% chance: pick from spaced repetition (weakest due items)
-    3. 40% chance: pick weakest skill
-    4. 20% chance: pick a focus area
-    5. 10% chance: random (exploration)
+    1. If operation_filter is set → pick randomly from those skills
+    2. If training_mode = "tables" → always tables_1_20
+    3. 30% chance: pick from spaced repetition (weakest due items)
+    4. 40% chance: pick weakest skill
+    5. 20% chance: pick a focus area
+    6. 10% chance: random (exploration)
     
     Returns: (skill_name, sub_skill_name or None)
     """
     import random
+
+    # Operation filter: pick randomly from selected skills
+    if operation_filter:
+        valid = [op for op in operation_filter if op in SKILL_DEFINITIONS]
+        if valid:
+            return random.choice(valid), None
 
     # Table training mode
     if training_mode == "tables":

@@ -544,6 +544,170 @@ GENERATORS = {
 
 
 # ════════════════════════════════════════
+#      GENERATE FROM EXAMPLE EXPRESSION
+# ════════════════════════════════════════
+
+import re as _re
+
+def _parse_expression_pattern(example: str) -> dict:
+    """Analyse an example expression and extract its structural pattern.
+    
+    Returns a dict with:
+      - operators: list of operators used (e.g. ['+', '-', '+', '-'])
+      - operand_ranges: list of (min_digits, max_digits) for each operand
+      - num_terms: number of operands
+      - allow_negative_result: bool
+    """
+    # Normalise: replace unicode operators with ASCII
+    expr = example.strip()
+    expr = expr.replace("×", "*").replace("÷", "/").replace("−", "-")
+    # Split into tokens: numbers and operators
+    # Handle leading negative: e.g. "-34+54"
+    tokens = _re.findall(r'[+\-*/]|[\d]+', expr)
+    
+    numbers = []
+    operators = []
+    expect_number = True
+    pending_sign = None
+    
+    for tok in tokens:
+        if tok in "+-*/" and expect_number:
+            # This is a sign, not an operator (e.g. leading minus)
+            pending_sign = tok
+            continue
+        if tok.isdigit():
+            n = int(tok)
+            if pending_sign == "-":
+                n = -n
+            pending_sign = None
+            numbers.append(n)
+            expect_number = False
+        elif tok in "+-*/":
+            operators.append(tok)
+            expect_number = True
+            pending_sign = None
+    
+    # Determine ranges per position
+    operand_ranges = []
+    for n in numbers:
+        abs_n = abs(n)
+        digits = len(str(abs_n))
+        # Give ±30% wiggle room on magnitude
+        lo = max(1, int(abs_n * 0.5))
+        hi = max(abs_n + 5, int(abs_n * 1.5))
+        operand_ranges.append((lo, hi))
+    
+    # Evaluate example to check if negative results are expected
+    try:
+        result = eval(expr)
+        allow_negative = result < 0
+    except:
+        allow_negative = True  # default to allowing it
+    
+    return {
+        "operators": operators,
+        "operand_ranges": operand_ranges,
+        "num_terms": len(numbers),
+        "allow_negative_result": allow_negative,
+    }
+
+
+def generate_from_example(example: str, count: int = 10) -> list[GeneratedExercise]:
+    """Generate `count` exercises structurally similar to the given example expression."""
+    pattern = _parse_expression_pattern(example)
+    ops = pattern["operators"]
+    ranges = pattern["operand_ranges"]
+    num_terms = pattern["num_terms"]
+    
+    # Map operators back to display form
+    OP_DISPLAY = {"+": "+", "-": "−", "*": "×", "/": "÷"}
+    
+    # Determine skill name from operators
+    unique_ops = set(ops)
+    if unique_ops <= {"+"}:
+        skill = "addition"
+    elif unique_ops <= {"-"}:
+        skill = "subtraction"
+    elif unique_ops <= {"*"}:
+        skill = "multiplication"
+    elif unique_ops <= {"/"}:
+        skill = "division"
+    elif len(ops) >= 2:
+        skill = "chain"
+    else:
+        skill = "mixed"
+    
+    exercises = []
+    seen = set()
+    attempts = 0
+    
+    while len(exercises) < count and attempts < count * 20:
+        attempts += 1
+        
+        # Generate random operands respecting the ranges
+        nums = []
+        for lo, hi in ranges:
+            nums.append(random.randint(lo, hi))
+        
+        # For division, ensure clean division
+        for i, op in enumerate(ops):
+            if op == "/":
+                # Make nums[i] a multiple of nums[i+1]
+                if i + 1 < len(nums) and nums[i + 1] != 0:
+                    multiplier = random.randint(2, max(2, nums[i] // max(1, nums[i + 1])))
+                    nums[i] = nums[i + 1] * multiplier
+        
+        # Build the question string
+        parts = [str(nums[0])]
+        for i, op in enumerate(ops):
+            if i + 1 < len(nums):
+                parts.append(OP_DISPLAY.get(op, op))
+                parts.append(str(nums[i + 1]))
+        question = " ".join(parts)
+        
+        # Compute the answer
+        try:
+            eval_expr = question.replace("×", "*").replace("÷", "/").replace("−", "-")
+            result = eval(eval_expr)
+            if result != int(result):
+                continue  # skip non-integer results
+            answer = str(int(result))
+        except:
+            continue
+        
+        # Skip duplicates
+        if question in seen:
+            continue
+        seen.add(question)
+        
+        # Estimate difficulty from number of terms and operand sizes
+        max_num = max(abs(n) for n in nums)
+        if max_num <= 20 and num_terms <= 3:
+            difficulty = 1
+        elif max_num <= 100 and num_terms <= 3:
+            difficulty = 2
+        elif max_num <= 100:
+            difficulty = 3
+        elif max_num <= 1000:
+            difficulty = 4
+        else:
+            difficulty = 5
+        
+        exercises.append(GeneratedExercise(
+            exercise_id=str(uuid4()),
+            skill=skill,
+            sub_skill="custom_example",
+            question=question,
+            correct_answer=answer,
+            difficulty=difficulty,
+            time_limit_ms=TIME_LIMITS.get(difficulty, 15000) + 3000 * max(0, num_terms - 2),
+            tip="Calcule étape par étape, de gauche à droite.",
+        ))
+    
+    return exercises
+
+
+# ════════════════════════════════════════
 #              TIP GENERATORS
 # ════════════════════════════════════════
 

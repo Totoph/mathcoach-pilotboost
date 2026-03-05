@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Send, Clock, Sparkles, Minus, Info, Eye, EyeOff, ChevronRight } from "lucide-react";
+import { ArrowLeft, Send, Clock, Sparkles, Minus, Info, Eye, EyeOff, ChevronRight, ChevronDown, Check, TrendingUp, TrendingDown, Equal, Mic, MicOff } from "lucide-react";
 import { getUser } from "@/lib/supabase";
 import { api, NextExercise, SubmitResult } from "@/lib/api";
+import VoiceTrainer from "@/components/VoiceTrainer";
 
 // ─── Types ───
 
@@ -27,6 +29,15 @@ interface SeriesResult {
 
 const SERIES_SIZE = 10;
 
+const OPERATION_OPTIONS = [
+  { key: "all", label: "Tout" },
+  { key: "addition", label: "Addition" },
+  { key: "subtraction", label: "Soustraction" },
+  { key: "multiplication", label: "Multiplication" },
+  { key: "division", label: "Division" },
+  { key: "advanced", label: "Avancé" },
+];
+
 // ─── Page ───
 
 export default function TrainPage() {
@@ -39,8 +50,8 @@ export default function TrainPage() {
   const [userInput, setUserInput] = useState("");
   const [isNegative, setIsNegative] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [answerState, setAnswerState] = useState<"idle" | "correct" | "wrong">("idle");
-  const [shakeInput, setShakeInput] = useState(false);
+  const [answerState, setAnswerState] = useState<"idle" | "correct">("idle");
+  const [correctDisplay, setCorrectDisplay] = useState(""); // holds the green answer text until next exercise loads
 
   // Session
   const [sessionStartTime] = useState(Date.now());
@@ -51,6 +62,12 @@ export default function TrainPage() {
 
   // Training mode (from query or dashboard)
   const [trainingMode, setTrainingMode] = useState<string | null>(null);
+  const [operationFilter, setOperationFilter] = useState<string[]>([]);
+  const [showOpDropdown, setShowOpDropdown] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const opDropdownRef = useRef<HTMLDivElement>(null);
+  const opButtonRef = useRef<HTMLButtonElement>(null);
+  const opMenuRef = useRef<HTMLDivElement>(null);
 
   // Series of 10
   const [seriesResults, setSeriesResults] = useState<SeriesResult[]>([]);
@@ -58,11 +75,26 @@ export default function TrainPage() {
   const [showPause, setShowPause] = useState(false);
   const [seriesStartTime, setSeriesStartTime] = useState(Date.now());
 
+  // Skill score tracking (before/after series)
+  const [skillScoresBefore, setSkillScoresBefore] = useState<Record<string, number>>({});
+  const [skillScoresAfter, setSkillScoresAfter] = useState<Record<string, number>>({});
+
+  // Custom series from example expression
+  const [customSeriesPool, setCustomSeriesPool] = useState<NextExercise[]>([]);
+  const [customSeriesExample, setCustomSeriesExample] = useState<string | null>(null);
+  const customPoolIdx = useRef(0);
+
+  // Loading state for buttons on pause screen
+  const [seriesLoading, setSeriesLoading] = useState(false);
+
   // Settings
   const [showHints, setShowHints] = useState(true);
 
-  // Wrong answer: show correct + "next" button
-  const [wrongResult, setWrongResult] = useState<SubmitResult | null>(null);
+  // Voice mode
+  const [voiceMode, setVoiceMode] = useState(false);
+
+  // Ref to avoid stale closure in auto-submit effect
+  const exerciseRef = useRef<NextExercise | null>(null);
 
   // Chat (only user-initiated)
   const [messages, setMessages] = useState<Message[]>([]);
@@ -84,6 +116,21 @@ export default function TrainPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // Close operation dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      if (
+        opDropdownRef.current && !opDropdownRef.current.contains(target) &&
+        opMenuRef.current && !opMenuRef.current.contains(target)
+      ) {
+        setShowOpDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -97,6 +144,13 @@ export default function TrainPage() {
         setTotalExercises(state.instance.state.total_exercises || 0);
         setGlobalLevel(state.instance.state.global_level || 0);
       } catch {}
+      // Fetch baseline skill scores for delta tracking
+      try {
+        const dash = await api.getDashboard();
+        const before: Record<string, number> = {};
+        dash.skills.forEach((s) => { before[s.name] = s.score; });
+        setSkillScoresBefore(before);
+      } catch {}
       await loadNextExercise();
       setLoading(false);
     }
@@ -109,101 +163,195 @@ export default function TrainPage() {
     if (!showPause && !loading) {
       inputRef.current?.focus();
     }
-  }, [currentExercise, showPause, loading, wrongResult]);
+  }, [currentExercise, showPause, loading]);
 
   // ─── Exercise loading ───
 
-  const loadNextExercise = useCallback(async () => {
+  const loadNextExercise = useCallback(async (overrides?: { mode?: string; operation?: string[] }) => {
     try {
-      const exercise = await api.getNextExercise(trainingMode || undefined);
+      let exercise: NextExercise;
+      // If we have a custom series pool, use it
+      if (customSeriesPool.length > 0 && customPoolIdx.current < customSeriesPool.length) {
+        exercise = customSeriesPool[customPoolIdx.current];
+        customPoolIdx.current++;
+      } else {
+        const mode = overrides?.mode ?? trainingMode;
+        const ops = overrides?.operation ?? operationFilter;
+        exercise = await api.getNextExercise(mode || undefined, ops.length > 0 ? ops : undefined);
+      }
+      // Reset everything atomically — question + answer swap at the same time
       setCurrentExercise(exercise);
       setExerciseStartTime(Date.now());
       setUserInput("");
       setIsNegative(false);
+      setCorrectDisplay("");
       setAnswerState("idle");
-      setShakeInput(false);
-      setWrongResult(null);
       setTimeout(() => inputRef.current?.focus(), 50);
     } catch (err) {
       console.error("Failed to load exercise:", err);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trainingMode]);
+  }, [trainingMode, operationFilter, customSeriesPool]);
+
+  // Keep exerciseRef in sync so auto-submit effect has fresh value
+  useEffect(() => { exerciseRef.current = currentExercise; }, [currentExercise]);
+
+  // ─── Auto-submit on input change (instant, no debounce) ───
+  useEffect(() => {
+    if (!userInput.trim() || isSubmitting || showPause || answerState === "correct") return;
+    // Quick client-side check: only call submit if answer could match
+    const exercise = exerciseRef.current;
+    if (exercise?.correct_answer) {
+      // Compare digit lengths only (ignore sign) so toggling ± doesn't block submission
+      const correctDigits = exercise.correct_answer.replace("-", "");
+      if (userInput.length < correctDigits.length) return;
+    }
+    handleSubmitAnswer();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userInput, isNegative, isSubmitting]);
 
   // ─── Submit answer ───
 
   async function handleSubmitAnswer() {
-    if (!currentExercise || !userInput.trim() || isSubmitting || wrongResult) return;
+    const exercise = exerciseRef.current;
+    if (!exercise || !userInput.trim() || isSubmitting || answerState === "correct") return;
 
     const finalAnswer = isNegative ? `-${userInput}` : userInput;
     const timeTaken = Date.now() - exerciseStartTime;
+
+    // ── Instant local validation ──
+    if (exercise.correct_answer && finalAnswer === exercise.correct_answer) {
+      setCorrectDisplay(finalAnswer);
+      setAnswerState("correct");
+      setTotalExercises((prev) => prev + 1);
+
+      const sr: SeriesResult = {
+        question: exercise.question,
+        correct_answer: exercise.correct_answer,
+        user_answer: finalAnswer,
+        is_correct: true,
+        time_ms: timeTaken,
+        error_type: null,
+        technique_tip: null,
+        skill_name: exercise.exercise_type,
+      };
+      const newResults = [...seriesResults, sr];
+      setSeriesResults(newResults);
+      const newIdx = seriesIndex + 1;
+      setSeriesIndex(newIdx);
+
+      if (newIdx >= SERIES_SIZE) {
+        setTimeout(() => setShowPause(true), 400);
+      } else {
+        loadNextExercise();
+      }
+
+      // Fire-and-forget: send to backend for stats/profile update
+      api.submitAnswer(exercise.exercise_id, finalAnswer, timeTaken)
+        .then((result) => {
+          if (result.global_level) setGlobalLevel(result.global_level);
+          if (result.skill_name && result.skill_score != null) {
+            setSkillScoresAfter(prev => ({ ...prev, [result.skill_name!]: result.skill_score! }));
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+
+    // If no local answer or wrong, call backend
     setIsSubmitting(true);
 
     try {
-      const result = await api.submitAnswer(currentExercise.exercise_id, finalAnswer, timeTaken);
-      setGlobalLevel(result.global_level || globalLevel);
-
-      const sr: SeriesResult = {
-        question: currentExercise.question,
-        correct_answer: result.correct_answer,
-        user_answer: finalAnswer,
-        is_correct: result.is_correct,
-        time_ms: timeTaken,
-        error_type: result.error_type,
-        technique_tip: result.technique_tip,
-        skill_name: result.skill_name,
-      };
-
-      const newResults = [...seriesResults, sr];
-      setSeriesResults(newResults);
+      const result = await api.submitAnswer(exercise.exercise_id, finalAnswer, timeTaken);
 
       if (result.is_correct) {
+        // Show the correct answer in green, freeze input
+        setCorrectDisplay(finalAnswer);
         setAnswerState("correct");
+        setGlobalLevel(result.global_level || globalLevel);
         setTotalExercises((prev) => prev + 1);
+        if (result.skill_name && result.skill_score != null) {
+          setSkillScoresAfter(prev => ({ ...prev, [result.skill_name!]: result.skill_score! }));
+        }
+
+        const sr: SeriesResult = {
+          question: exercise.question,
+          correct_answer: result.correct_answer,
+          user_answer: finalAnswer,
+          is_correct: true,
+          time_ms: timeTaken,
+          error_type: null,
+          technique_tip: result.technique_tip,
+          skill_name: result.skill_name,
+        };
+        const newResults = [...seriesResults, sr];
+        setSeriesResults(newResults);
         const newIdx = seriesIndex + 1;
         setSeriesIndex(newIdx);
 
-        // Check if series of 10 done
         if (newIdx >= SERIES_SIZE) {
-          setTimeout(() => setShowPause(true), 300);
+          setTimeout(() => setShowPause(true), 400);
         } else {
-          setTimeout(() => loadNextExercise(), 200);
+          // Load next exercise immediately — it will reset everything atomically
+          loadNextExercise();
         }
-      } else {
-        setAnswerState("wrong");
-        setShakeInput(true);
-        setWrongResult(result);
-        setSeriesIndex(seriesIndex + 1);
-        setTimeout(() => { setShakeInput(false); }, 300);
       }
-    } catch (err) {
-      console.error("Failed to submit:", err);
+      // Wrong answer: do nothing — user keeps trying
+    } catch (err: any) {
+      if (err?.message?.includes("expired") || err?.message?.includes("not found")) {
+        loadNextExercise();
+      }
     } finally {
       setIsSubmitting(false);
     }
   }
 
-  // After wrong answer: next exercise
-  function handleContinueAfterWrong() {
-    setWrongResult(null);
-    setAnswerState("idle");
-    setUserInput("");
-    setIsNegative(false);
-
-    if (seriesIndex >= SERIES_SIZE) {
-      setShowPause(true);
-    } else {
-      loadNextExercise();
-    }
-  }
-
   // After pause: start new series
-  function handleStartNewSeries() {
-    setShowPause(false);
+  async function handleStartNewSeries() {
+    if (seriesLoading) return;
+    setSeriesLoading(true);
+    // Clear custom series unless replaying
+    setCustomSeriesPool([]);
+    setCustomSeriesExample(null);
+    customPoolIdx.current = 0;
     setSeriesResults([]);
     setSeriesIndex(0);
     setSeriesStartTime(Date.now());
-    loadNextExercise();
+    // Use current "after" scores as new baseline, reset after
+    setSkillScoresBefore((prev) => ({ ...prev, ...skillScoresAfter }));
+    setSkillScoresAfter({});
+    await loadNextExercise();
+    setSeriesLoading(false);
+    setShowPause(false);
+  }
+
+  // Replay same custom series type
+  async function handleReplayCustomSeries() {
+    if (!customSeriesExample || seriesLoading) return;
+    setSeriesLoading(true);
+    try {
+      const res = await api.generateCustomSeries(customSeriesExample, SERIES_SIZE);
+      if (res.exercises.length > 0) {
+        setCustomSeriesPool(res.exercises);
+        customPoolIdx.current = 1;
+        setSeriesResults([]);
+        setSeriesIndex(0);
+        setSeriesStartTime(Date.now());
+        setSkillScoresBefore((prev) => ({ ...prev, ...skillScoresAfter }));
+        setSkillScoresAfter({});
+        const first = res.exercises[0];
+        setCurrentExercise(first);
+        setExerciseStartTime(Date.now());
+        setUserInput("");
+        setIsNegative(false);
+        setCorrectDisplay("");
+        setAnswerState("idle");
+        setTimeout(() => inputRef.current?.focus(), 50);
+        setShowPause(false);
+      }
+    } catch {} finally {
+      setSeriesLoading(false);
+    }
   }
 
   // ─── Keyboard input handler ───
@@ -214,37 +362,91 @@ export default function TrainPage() {
       return;
     }
 
-    if (wrongResult) {
-      if (e.key === "Enter" || e.key === " ") handleContinueAfterWrong();
-      return;
-    }
-
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleSubmitAnswer();
-    } else if (e.key === "Backspace") {
+    if (e.key === "Backspace") {
       setUserInput((prev) => prev.slice(0, -1));
     } else if (e.key === "-") {
       setIsNegative((prev) => !prev);
-    } else if (e.key === "." || e.key === ",") {
-      if (!userInput.includes(".")) setUserInput((prev) => prev + ".");
     } else if (/^[0-9]$/.test(e.key)) {
       setUserInput((prev) => prev + e.key);
     }
   }
 
+  // ─── Voice answer handler ───
+
+  function handleVoiceAnswer(answer: string) {
+    // Sync voice answer with the normal submit flow
+    const exercise = exerciseRef.current;
+    if (!exercise) return;
+
+    const timeTaken = Date.now() - exerciseStartTime;
+    const isCorrect = exercise.correct_answer ? answer === exercise.correct_answer : false;
+
+    if (isCorrect) {
+      setCorrectDisplay(answer);
+      setAnswerState("correct");
+      setTotalExercises((prev) => prev + 1);
+
+      const sr: SeriesResult = {
+        question: exercise.question,
+        correct_answer: exercise.correct_answer || answer,
+        user_answer: answer,
+        is_correct: true,
+        time_ms: timeTaken,
+        error_type: null,
+        technique_tip: null,
+        skill_name: exercise.exercise_type,
+      };
+      const newResults = [...seriesResults, sr];
+      setSeriesResults(newResults);
+      const newIdx = seriesIndex + 1;
+      setSeriesIndex(newIdx);
+
+      if (newIdx >= SERIES_SIZE) {
+        setTimeout(() => setShowPause(true), 800);
+      }
+
+      api.submitAnswer(exercise.exercise_id, answer, timeTaken)
+        .then((result) => {
+          if (result.global_level) setGlobalLevel(result.global_level);
+          if (result.skill_name && result.skill_score != null) {
+            setSkillScoresAfter(prev => ({ ...prev, [result.skill_name!]: result.skill_score! }));
+          }
+        })
+        .catch(() => {});
+    } else {
+      // Wrong — record in series after 2nd attempt (VoiceTrainer handles retries internally)
+      const sr: SeriesResult = {
+        question: exercise.question,
+        correct_answer: exercise.correct_answer || "?",
+        user_answer: answer,
+        is_correct: false,
+        time_ms: timeTaken,
+        error_type: null,
+        technique_tip: null,
+        skill_name: exercise.exercise_type,
+      };
+      const newResults = [...seriesResults, sr];
+      setSeriesResults(newResults);
+      const newIdx = seriesIndex + 1;
+      setSeriesIndex(newIdx);
+
+      if (newIdx >= SERIES_SIZE) {
+        setTimeout(() => setShowPause(true), 800);
+      }
+    }
+  }
+
+  function handleVoiceNextExercise() {
+    loadNextExercise();
+  }
+
   // ─── Numpad click ───
 
   function handleNumpadClick(value: string) {
-    if (wrongResult) return;
     if (value === "DEL") {
       setUserInput((prev) => prev.slice(0, -1));
-    } else if (value === "OK") {
-      handleSubmitAnswer();
     } else if (value === "±") {
       setIsNegative((prev) => !prev);
-    } else if (value === ".") {
-      if (!userInput.includes(".")) setUserInput((prev) => prev + ".");
     } else {
       setUserInput((prev) => prev + value);
     }
@@ -253,15 +455,139 @@ export default function TrainPage() {
 
   // ─── Chat ───
 
+  const SUGGESTION_CHIPS = [
+    { label: "Carrés", text: "Donne moi des carrés" },
+    { label: "Tables ×7", text: "Tables de 7" },
+    { label: "Additions faciles", text: "Additions faciles" },
+    { label: "Mult. difficiles", text: "Multiplications difficiles" },
+    { label: "Chaînes +−", text: "34-54+67-23-65" },
+    { label: "Divisions", text: "Divisions niveau moyen" },
+  ];
+
+  // ── Local keyword matcher: resolves 90% of requests without LLM ──
+  function matchLocalIntent(msg: string): { skill: string; difficulty: number; description: string } | null {
+    const m = msg.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    // Squares
+    if (/carr[eé]s?|square/.test(m)) return { skill: "squares_1_30", difficulty: m.includes("difficile") || m.includes("dur") ? 4 : 2, description: "Carrés" };
+    // Tables
+    if (/table/.test(m)) return { skill: "tables_1_20", difficulty: 2, description: "Tables de multiplication" };
+    // Addition
+    if (/addition/.test(m)) return { skill: "addition", difficulty: m.includes("difficile") || m.includes("dur") ? 4 : m.includes("facile") ? 1 : 2, description: "Additions" };
+    // Subtraction
+    if (/soustraction/.test(m)) return { skill: "subtraction", difficulty: m.includes("difficile") || m.includes("dur") ? 4 : m.includes("facile") ? 1 : 2, description: "Soustractions" };
+    // Multiplication
+    if (/multipli/.test(m)) return { skill: "multiplication", difficulty: m.includes("difficile") || m.includes("dur") ? 4 : m.includes("facile") ? 1 : 2, description: "Multiplications" };
+    // Division
+    if (/division/.test(m)) return { skill: "division", difficulty: m.includes("difficile") || m.includes("dur") ? 4 : m.includes("facile") ? 1 : 2, description: "Divisions" };
+    // Chain
+    if (/chaine|enchaine|chain/.test(m)) return { skill: "chain", difficulty: 2, description: "Chaînes de calcul" };
+    // Mixed
+    if (/mixte|melange|mix/.test(m)) return { skill: "mixed", difficulty: 2, description: "Opérations mixtes" };
+    // Advanced
+    if (/avance|vedique|croise/.test(m)) return { skill: "advanced", difficulty: 3, description: "Techniques avancées" };
+    // Estimation
+    if (/estim|arrondi/.test(m)) return { skill: "estimation", difficulty: 2, description: "Estimations" };
+    // Decomposition
+    if (/decompos|factori/.test(m)) return { skill: "decomposition", difficulty: 2, description: "Décompositions" };
+    // Fast mult (×5, ×9, ×11, etc.)
+    if (/rapide|\*5|\*9|\*11|\*25|\*99|fois 5|fois 9|fois 11/.test(m)) return { skill: "fast_multiplication", difficulty: 2, description: "Mult. rapides" };
+    return null;
+  }
+
+  // Check if a string looks like a math expression
+  function isMathExpression(s: string): boolean {
+    const cleaned = s.replace(/\s/g, "");
+    return /^\d+([+\-*/×÷−]\d+)+$/.test(cleaned);
+  }
+
+  // Helper: launch a custom series from a list of exercises
+  function launchCustomSeries(exercises: NextExercise[], label: string) {
+    setCustomSeriesExample(label);
+    setCustomSeriesPool(exercises);
+    customPoolIdx.current = 1;
+    setSeriesResults([]);
+    setSeriesIndex(0);
+    setShowPause(false);
+    setSeriesStartTime(Date.now());
+    setSkillScoresAfter({});
+    const first = exercises[0];
+    setCurrentExercise(first);
+    setExerciseStartTime(Date.now());
+    setUserInput("");
+    setIsNegative(false);
+    setCorrectDisplay("");
+    setAnswerState("idle");
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }
+
   async function handleSendChat() {
     if (!chatInput.trim()) return;
     const msg = chatInput;
     setChatInput("");
+
     setMessages((prev) => [...prev, { role: "user", message: msg, timestamp: Date.now() }]);
+
+    // Fast path: pure math expression → direct custom series (no LLM needed)
+    if (isMathExpression(msg)) {
+      setMessages((prev) => [...prev, { role: "agent", message: `🎯 Je génère ${SERIES_SIZE} calculs similaires...`, timestamp: Date.now() }]);
+      try {
+        const res = await api.generateCustomSeries(msg, SERIES_SIZE);
+        if (res.exercises.length > 0) {
+          launchCustomSeries(res.exercises, msg);
+          setMessages((prev) => [...prev, { role: "agent", message: `✅ C'est parti ! ${res.exercises.length} calculs`, timestamp: Date.now() }]);
+        }
+      } catch {
+        setMessages((prev) => [...prev, { role: "agent", message: "Désolé, je n'ai pas pu générer les exercices.", timestamp: Date.now() }]);
+      }
+      return;
+    }
+
+    // Smart path: try local keyword match first (instant), then fall back to Gemini
+    const localIntent = matchLocalIntent(msg);
+    if (localIntent) {
+      setMessages((prev) => [...prev, { role: "agent", message: `🎯 ${localIntent.description} — génération...`, timestamp: Date.now() }]);
+      try {
+        const res = await api.generateSkillSeries(localIntent.skill, localIntent.difficulty, SERIES_SIZE);
+        if (res.exercises.length > 0) {
+          launchCustomSeries(res.exercises, msg);
+          setMessages((prev) => {
+            const copy = [...prev];
+            copy.pop(); // remove "génération..."
+            return [...copy, { role: "agent", message: `🎯 ${localIntent.description} — ${res.exercises.length} calculs. C'est parti !`, timestamp: Date.now() }];
+          });
+        }
+      } catch {
+        setMessages((prev) => [...prev, { role: "agent", message: "Erreur lors de la génération.", timestamp: Date.now() }]);
+      }
+      return;
+    }
+
+    // Fallback: send to Gemini for intent understanding
+    setMessages((prev) => [...prev, { role: "agent", message: "🤔 Je réfléchis...", timestamp: Date.now() }]);
     try {
-      const res = await api.chat(msg);
-      setMessages((prev) => [...prev, { role: "agent", message: res.agent_message, timestamp: Date.now() }]);
-    } catch {}
+      const res = await api.smartSeries(msg, SERIES_SIZE);
+
+      // Remove the "thinking" message
+      setMessages((prev) => prev.slice(0, -1));
+
+      if (res.is_exercise_request && res.exercises.length > 0) {
+        const desc = res.description || "Série personnalisée";
+        launchCustomSeries(res.exercises, res.example_used || msg);
+        setMessages((prev) => [...prev, { role: "agent", message: `🎯 ${desc} — ${res.exercises.length} calculs. C'est parti !`, timestamp: Date.now() }]);
+      } else if (res.chat_response) {
+        // It was a question, not an exercise request
+        setMessages((prev) => [...prev, { role: "agent", message: res.chat_response!, timestamp: Date.now() }]);
+      } else {
+        setMessages((prev) => [...prev, { role: "agent", message: "Désolé, je n'ai pas compris. Essaie un exemple comme '34+56-12' ou 'donne moi des carrés'.", timestamp: Date.now() }]);
+      }
+    } catch {
+      // Remove thinking message and show error
+      setMessages((prev) => {
+        const copy = [...prev];
+        if (copy.length > 0 && copy[copy.length - 1].message === "🤔 Je réfléchis...") copy.pop();
+        return [...copy, { role: "agent", message: "Erreur de connexion. Réessaie.", timestamp: Date.now() }];
+      });
+    }
   }
 
   // ─── Mode change ───
@@ -272,7 +598,28 @@ export default function TrainPage() {
     setSeriesResults([]);
     setSeriesIndex(0);
     setShowPause(false);
-    loadNextExercise();
+    loadNextExercise({ mode });
+  }
+
+  function handleOperationChange(op: string) {
+    let newFilter: string[];
+    if (op === "all") {
+      newFilter = [];
+    } else {
+      const current = [...operationFilter];
+      const idx = current.indexOf(op);
+      if (idx >= 0) {
+        current.splice(idx, 1);
+      } else {
+        current.push(op);
+      }
+      newFilter = current;
+    }
+    setOperationFilter(newFilter);
+    setSeriesResults([]);
+    setSeriesIndex(0);
+    setShowPause(false);
+    loadNextExercise({ operation: newFilter });
   }
 
   // ─── Loading ───
@@ -291,22 +638,37 @@ export default function TrainPage() {
   const sessionSec = Math.floor((now - sessionStartTime) / 1000);
   const mm = Math.floor(sessionSec / 60);
   const ss = sessionSec % 60;
-  const displayAnswer = (isNegative ? "-" : "") + (userInput || "");
+  const displayAnswer = answerState === "correct" ? correctDisplay : ((isNegative ? "-" : "") + (userInput || ""));
 
   // ─── PAUSE / SERIES STATS SCREEN ───
 
   if (showPause) {
-    const correct = seriesResults.filter((r) => r.is_correct).length;
-    const wrong = seriesResults.filter((r) => !r.is_correct).length;
     const totalTime = seriesResults.reduce((s, r) => s + r.time_ms, 0);
     const avgTime = Math.round(totalTime / seriesResults.length);
-    const accuracy = Math.round((correct / seriesResults.length) * 100);
     const wrongResults = seriesResults.filter((r) => !r.is_correct);
     // Collect unique technique tips from mistakes
     const tips = wrongResults
       .map((r) => r.technique_tip)
       .filter((t): t is string => !!t)
       .filter((t, i, a) => a.indexOf(t) === i);
+
+    // Compute skill progress from series results
+    const SKILL_LABELS: Record<string, string> = {
+      addition: "Addition",
+      subtraction: "Soustraction",
+      multiplication: "Multiplication",
+      division: "Division",
+      advanced: "Avancé",
+      tables_1_20: "Tables",
+      squares_1_30: "Carrés",
+      decomposition: "Décompositions",
+      fast_multiplication: "Mult. rapides",
+      estimation: "Estimation",
+      mixed: "Mixte",
+      chain: "Chaînes",
+    };
+    // Gather unique skills practiced in this series
+    const skillsInSeries = Array.from(new Set(seriesResults.map((r) => r.skill_name || "other")));
 
     return (
       <div className="h-[calc(100vh-6.5rem)] flex items-center justify-center overflow-y-auto" onKeyDown={(e) => { if (e.key === "Enter") handleStartNewSeries(); }} tabIndex={0}>
@@ -315,39 +677,56 @@ export default function TrainPage() {
           <div className="bento-card p-6">
             <div className="text-center mb-4">
               <h2 className="text-xl font-extrabold text-slate-900 mb-1">Série terminée ! 🎯</h2>
-              <p className="text-slate-400 text-xs">{SERIES_SIZE} exercices complétés</p>
-            </div>
-
-            <div className="grid grid-cols-4 gap-3 mb-4">
-              <div className="text-center p-2.5 bg-green-50 rounded-xl">
-                <div className="text-2xl font-extrabold text-green-600">{correct}</div>
-                <div className="text-[10px] text-green-700 font-medium">Correctes</div>
-              </div>
-              <div className="text-center p-2.5 bg-red-50 rounded-xl">
-                <div className="text-2xl font-extrabold text-red-500">{wrong}</div>
-                <div className="text-[10px] text-red-600 font-medium">Erreurs</div>
-              </div>
-              <div className="text-center p-2.5 bg-blue-50 rounded-xl">
-                <div className="text-2xl font-extrabold text-blue-600">{accuracy}%</div>
-                <div className="text-[10px] text-blue-700 font-medium">Précision</div>
-              </div>
-              <div className="text-center p-2.5 bg-purple-50 rounded-xl">
-                <div className="text-2xl font-extrabold text-purple-600">{(avgTime / 1000).toFixed(1)}s</div>
-                <div className="text-[10px] text-purple-700 font-medium">Temps moy.</div>
+              <div className="flex items-center justify-center gap-4 mt-2">
+                <span className="text-xs text-slate-500">Temps moy. <span className="font-bold text-slate-900">{(avgTime / 1000).toFixed(1)}s</span></span>
+                <span className="text-xs text-slate-500">Durée <span className="font-bold text-slate-900">{totalTime < 60000 ? `${Math.round(totalTime / 1000)}s` : `${Math.floor(totalTime / 60000)}m${String(Math.round((totalTime % 60000) / 1000)).padStart(2, "0")}s`}</span></span>
               </div>
             </div>
 
-            <div className="flex items-center justify-between text-xs text-slate-500 border-t border-slate-100 pt-3">
-              <span>Niveau global</span>
-              <span className="font-bold text-slate-900">{Math.round(globalLevel)}/100</span>
-            </div>
-            <div className="flex items-center justify-between text-xs text-slate-500 mt-1.5">
-              <span>Total exercices</span>
-              <span className="font-bold text-slate-900">{totalExercises}</span>
-            </div>
-            <div className="flex items-center justify-between text-xs text-slate-500 mt-1.5">
-              <span>Durée mentale</span>
-              <span className="font-bold text-slate-900">{Math.round(totalTime / 60000)} min</span>
+            {/* Skill scores with deltas */}
+            <div className="space-y-2">
+              {skillsInSeries.map((skill) => {
+                const after = skillScoresAfter[skill];
+                const before = skillScoresBefore[skill];
+                const hasScore = after != null;
+                const score = hasScore ? Math.round(after) : null;
+                const delta = (hasScore && before != null) ? Math.round(after - before) : null;
+                const isUp = delta != null && delta > 0;
+                const isDown = delta != null && delta < 0;
+                return (
+                  <div key={skill} className="flex items-center gap-3 rounded-xl px-3 py-2.5 bg-slate-50">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                      isUp ? "bg-green-100" : isDown ? "bg-red-100" : "bg-slate-200"
+                    }`}>
+                      {isUp ? <TrendingUp className="w-4 h-4 text-green-600" /> :
+                       isDown ? <TrendingDown className="w-4 h-4 text-red-500" /> :
+                       <Equal className="w-4 h-4 text-slate-400" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-slate-900">{SKILL_LABELS[skill] || skill}</span>
+                        <div className="flex items-center gap-2">
+                          {hasScore ? (
+                            <span className="text-sm font-bold text-slate-900">{score}<span className="text-xs font-normal text-slate-400">/100</span></span>
+                          ) : (
+                            <span className="text-xs text-slate-400">…</span>
+                          )}
+                          {delta != null && delta !== 0 && (
+                            <span className={`text-xs font-bold ${isUp ? "text-green-600" : "text-red-500"}`}>
+                              {isUp ? `+${delta}` : `${delta}`}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-200 rounded-full mt-1">
+                        <div className={`h-full rounded-full transition-all ${
+                          isUp ? "bg-green-500" : isDown ? "bg-red-400" : "bg-slate-400"
+                        }`} style={{ width: `${score ?? 0}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -382,9 +761,23 @@ export default function TrainPage() {
             </div>
           )}
 
-          <button onClick={handleStartNewSeries}
-            className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2">
-            Série suivante <ChevronRight className="w-4 h-4" />
+          {customSeriesExample && (
+            <button onClick={handleReplayCustomSeries} disabled={seriesLoading}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2">
+              {seriesLoading ? (
+                <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Génération...</>
+              ) : (
+                <>🔄 Relancer le même type de série</>
+              )}
+            </button>
+          )}
+          <button onClick={handleStartNewSeries} disabled={seriesLoading}
+            className="w-full py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2">
+            {seriesLoading ? (
+              <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Chargement...</>
+            ) : (
+              <>Série suivante <ChevronRight className="w-4 h-4" /></>
+            )}
           </button>
           <button onClick={() => router.push("/dashboard")}
             className="w-full py-2 text-slate-500 hover:text-slate-700 font-medium text-xs transition-all">
@@ -410,33 +803,99 @@ export default function TrainPage() {
       />
 
       {/* Top bar */}
-      <div className="flex-shrink-0 grid grid-cols-5 gap-2.5 p-2.5">
-        <div className="bento-card p-2.5 flex items-center gap-2">
-          <button onClick={() => router.push("/dashboard")}
-            className="p-1.5 rounded-lg hover:bg-slate-100 transition-all text-slate-400 hover:text-slate-700">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <span className="text-xs font-bold text-slate-900 hidden sm:inline">MathCoach</span>
-        </div>
+      <div className="flex-shrink-0 grid grid-cols-4 gap-2.5 p-2.5">
 
-        {/* Mode selector */}
-        <div className="bento-card p-2.5 flex items-center justify-center gap-1.5">
-          {[
-            { key: "free", label: "Libre" },
-            { key: "tables", label: "Tables" },
-          ].map((m) => (
-            <button key={m.key} onClick={() => handleModeChange(m.key)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                (trainingMode || "free") === m.key
-                  ? "bg-slate-900 text-white"
-                  : "text-slate-400 hover:text-slate-700 hover:bg-slate-50"
-              }`}>
-              {m.label}
+        {/* Mode selector + Operation dropdown — spans 2 columns */}
+        <div className="col-span-2 bento-card p-2.5 flex items-center gap-3">
+          {/* Mode buttons */}
+          <div className="flex items-center gap-1.5">
+            {[
+              { key: "free", label: "Libre" },
+              { key: "tables", label: "Tables" },
+            ].map((m) => (
+              <button key={m.key} onClick={() => handleModeChange(m.key)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  (trainingMode || "free") === m.key
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-400 hover:text-slate-700 hover:bg-slate-50"
+                }`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Separator */}
+          <div className="w-px h-6 bg-slate-200" />
+
+          {/* Operation dropdown */}
+          <div ref={opDropdownRef}>
+            <button
+              ref={opButtonRef}
+              onClick={() => {
+                if (!showOpDropdown && opButtonRef.current) {
+                  const rect = opButtonRef.current.getBoundingClientRect();
+                  setDropdownPos({ top: rect.bottom + 4, left: rect.left });
+                }
+                setShowOpDropdown(!showOpDropdown);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200"
+            >
+              {operationFilter.length === 0
+                ? "Tout"
+                : operationFilter.length === 1
+                ? OPERATION_OPTIONS.find((o) => o.key === operationFilter[0])?.label
+                : `${operationFilter.length} types`}
+              <ChevronDown className={`w-4 h-4 transition-transform ${showOpDropdown ? "rotate-180" : ""}`} />
             </button>
-          ))}
+            {showOpDropdown && createPortal(
+              <div
+                ref={opMenuRef}
+                className="w-48 bg-white rounded-xl border border-slate-200 shadow-2xl py-1 overflow-hidden"
+                style={{ position: "fixed", top: dropdownPos.top, left: dropdownPos.left, zIndex: 99999 }}
+              >
+                {/* "Tout" option */}
+                <button
+                  onClick={() => handleOperationChange("all")}
+                  className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 transition-all ${
+                    operationFilter.length === 0
+                      ? "bg-slate-900 text-white font-medium"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}>
+                  <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                    operationFilter.length === 0 ? "bg-white border-white" : "border-slate-300"
+                  }`}>
+                    {operationFilter.length === 0 && <Check className="w-3 h-3 text-slate-900" />}
+                  </div>
+                  Tout
+                </button>
+                <div className="h-px bg-slate-100 mx-2" />
+                {/* Individual operations */}
+                {OPERATION_OPTIONS.filter((o) => o.key !== "all").map((op) => {
+                  const isSelected = operationFilter.includes(op.key);
+                  return (
+                    <button key={op.key}
+                      onClick={() => handleOperationChange(op.key)}
+                      className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 transition-all ${
+                        isSelected
+                          ? "bg-slate-100 text-slate-900 font-medium"
+                          : "text-slate-600 hover:bg-slate-50"
+                      }`}>
+                      <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                        isSelected ? "bg-slate-900 border-slate-900" : "border-slate-300"
+                      }`}>
+                        {isSelected && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      {op.label}
+                    </button>
+                  );
+                })}
+              </div>,
+              document.body
+            )}
+          </div>
         </div>
 
-        {/* Series progress */}
+        {/* Series progress with dots */}
         <div className="bento-card p-2.5 flex items-center justify-center gap-2">
           <div className="flex gap-1">
             {Array.from({ length: SERIES_SIZE }).map((_, i) => (
@@ -450,11 +909,6 @@ export default function TrainPage() {
           <span className="text-xs font-bold text-slate-600">{seriesIndex}/{SERIES_SIZE}</span>
         </div>
 
-        {/* Level */}
-        <div className="bento-card p-2.5 flex items-center justify-center">
-          <span className="text-xs font-bold text-slate-900">{Math.round(globalLevel)}/100</span>
-        </div>
-
         {/* Timer + Hints toggle */}
         <div className="bento-card p-2.5 flex items-center justify-end gap-2.5">
           <div className="flex items-center gap-1.5">
@@ -463,17 +917,36 @@ export default function TrainPage() {
               {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
             </span>
           </div>
+          <button onClick={() => setVoiceMode(!voiceMode)} title={voiceMode ? "Désactiver le mode vocal" : "Activer le mode vocal"}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${voiceMode ? "bg-purple-100 text-purple-600 border border-purple-200" : "bg-slate-100 text-slate-400 border border-slate-200"}`}>
+            {voiceMode ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+            <span className="hidden sm:inline">Vocal</span>
+          </button>
           <button onClick={() => setShowHints(!showHints)} title={showHints ? "Masquer les aides" : "Afficher les aides"}
-            className={`p-1.5 rounded-lg transition-all ${showHints ? "bg-blue-50 text-blue-500" : "bg-slate-50 text-slate-400"}`}>
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${showHints ? "bg-blue-100 text-blue-600 border border-blue-200" : "bg-slate-100 text-slate-400 border border-slate-200"}`}>
             {showHints ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+            <span className="hidden sm:inline">{showHints ? "Aides" : "Aides"}</span>
           </button>
         </div>
       </div>
 
       {/* Main: Chat + Exercise — fills remaining space, no scroll */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-2.5 px-2.5 pb-2.5 min-h-0">
-        {/* Chat — only section that scrolls */}
+        {/* Sidebar: Voice Trainer (when active) or Chat */}
         <div className="lg:col-span-1 bento-card flex flex-col min-h-0 overflow-hidden">
+          {voiceMode ? (
+            /* Voice Trainer Panel — full height, centered */
+            <VoiceTrainer
+              currentExercise={currentExercise}
+              onAnswer={handleVoiceAnswer}
+              onNextExercise={handleVoiceNextExercise}
+              loading={loading}
+              seriesIndex={seriesIndex}
+              seriesSize={SERIES_SIZE}
+              showPause={showPause}
+            />
+          ) : (
+          <>
           <div className="flex-shrink-0 p-3 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-purple-500" />
@@ -483,9 +956,19 @@ export default function TrainPage() {
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
             {messages.length === 0 && (
-              <p className="text-sm text-slate-400 text-center mt-4">
-                Pose une question sur une technique de calcul mental...
-              </p>
+              <div className="mt-3 space-y-3">
+                <p className="text-xs text-slate-400 text-center">
+                  Choisis un type ou écris ta demande :
+                </p>
+                <div className="flex flex-wrap gap-1.5 justify-center">
+                  {SUGGESTION_CHIPS.map((chip) => (
+                    <button key={chip.label} onClick={() => setChatInput(chip.text)}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-medium text-slate-600 transition-all border border-slate-200 hover:border-slate-300">
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
             {messages.map((msg, i) => (
               <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -506,7 +989,7 @@ export default function TrainPage() {
               <input type="text" value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); handleSendChat(); } }}
-                placeholder="Pose ta question..."
+                placeholder="Ex: carrés, 34+56-12, tables de 9..."
                 className="flex-1 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:border-primary focus:outline-none text-sm" />
               <button onClick={handleSendChat}
                 className="p-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all">
@@ -514,6 +997,8 @@ export default function TrainPage() {
               </button>
             </div>
           </div>
+          </>
+          )}
         </div>
 
         {/* Exercise area — no scroll, centered */}
@@ -522,95 +1007,43 @@ export default function TrainPage() {
 
           {currentExercise && (
             <>
-              {/* Badge */}
-              <div className="absolute top-3 left-4 flex items-center gap-2">
-                <span className="text-[11px] font-medium text-slate-400 bg-slate-50 px-2.5 py-1 rounded-full border border-slate-100">
-                  {currentExercise.exercise_type} · diff {currentExercise.difficulty}
-                </span>
-                {currentExercise.sub_skill && (
-                  <span className="text-[11px] font-medium text-blue-500 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100">
-                    {currentExercise.sub_skill}
-                  </span>
-                )}
-              </div>
-
               {/* Question */}
               <div className="text-5xl lg:text-7xl font-extrabold text-slate-900 mb-5 text-center tracking-tight select-none">
                 {currentExercise.question}
               </div>
 
-              {/* Wrong answer feedback */}
-              {wrongResult && (
-                <div className="mb-3 max-w-sm w-full px-4">
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center space-y-2">
-                    <p className="text-lg font-bold text-green-600">
-                      {wrongResult.correct_answer}
-                    </p>
-                    {showHints && wrongResult.technique_tip && (
-                      <div className="flex items-start gap-1.5 bg-white/60 rounded-lg p-2">
-                        <Info className="w-3.5 h-3.5 text-blue-500 mt-0.5 flex-shrink-0" />
-                        <p className="text-[11px] text-slate-700 text-left">{wrongResult.technique_tip}</p>
-                      </div>
-                    )}
-                    {showHints && wrongResult.error_type && (
-                      <span className="inline-block text-[9px] px-2 py-0.5 bg-red-100 text-red-600 rounded-full">
-                        {wrongResult.error_type}
-                      </span>
-                    )}
-                    <button onClick={handleContinueAfterWrong}
-                      className="mt-1.5 w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold text-xs transition-all">
-                      Continuer ▸
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Answer input (only if not showing wrong result) */}
-              {!wrongResult && (
-                <>
+              {/* Answer input */}
+              <>
                   <div className="mb-4 min-w-[260px]">
                     <div className={`rounded-2xl border-2 px-8 py-3 text-center text-4xl font-mono min-h-[56px] flex items-center justify-center transition-all duration-150 bg-white ${
-                      answerState === "correct" ? "border-green-400 bg-green-50/50"
-                        : answerState === "wrong" ? "border-red-400 bg-red-50/50"
-                        : "border-slate-200"
-                    } ${shakeInput ? "animate-shake-x" : ""}`}>
-                      <span className={`${
-                        answerState === "correct" ? "text-green-500"
-                          : answerState === "wrong" ? "text-red-500"
-                          : "text-slate-900"
-                      }`}>
+                      answerState === "correct" ? "border-green-400 bg-green-50/50" : "border-slate-200"
+                    }`}>
+                      <span className={answerState === "correct" ? "text-green-500" : "text-slate-900"}>
                         {displayAnswer || <span className="text-slate-300">?</span>}
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-400 text-center mt-1.5">Clavier ou pavé numérique</p>
                   </div>
 
-                  {/* Numpad (compact) */}
-                  <div className="grid grid-cols-4 gap-2">
-                    {["7", "8", "9", "DEL", "4", "5", "6", "±", "1", "2", "3", ".", "0", "00", "OK", ""].map((key, idx) => {
-                      if (key === "") return <div key={idx} />;
-                      return (
-                        <button key={key} onClick={() => handleNumpadClick(key)}
-                          className={`w-[56px] h-[48px] rounded-xl font-bold text-base transition-all duration-100 select-none ${
-                            key === "OK"
-                              ? "bg-green-500 text-white hover:bg-green-600 disabled:opacity-40"
-                              : key === "DEL"
-                              ? "bg-slate-200 text-slate-600 hover:bg-slate-300"
-                              : key === "±"
-                              ? `${isNegative ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-600"} hover:bg-blue-400 hover:text-white`
-                              : "bg-white border border-slate-200 text-slate-800 hover:bg-slate-50"
-                          }`}
-                          disabled={key === "OK" && (isSubmitting || !userInput.trim())}>
-                          {key === "±" ? <Minus className="w-4 h-4 mx-auto" /> : key}
-                        </button>
-                      );
-                    })}
+                  {/* Numpad */}
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {["7", "8", "9", "4", "5", "6", "1", "2", "3", "±", "0", "DEL"].map((key) => (
+                      <button key={key} onClick={() => handleNumpadClick(key)}
+                        className={`w-[80px] h-[64px] rounded-2xl font-bold text-xl transition-all duration-100 select-none ${
+                          key === "DEL"
+                            ? "bg-slate-200 text-slate-600 hover:bg-slate-300"
+                            : key === "±"
+                            ? `${isNegative ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-600"} hover:bg-blue-400 hover:text-white`
+                            : "bg-white border border-slate-200 text-slate-800 hover:bg-slate-50 active:bg-slate-100"
+                        }`}>
+                        {key === "±" ? <Minus className="w-5 h-5 mx-auto" /> : key}
+                      </button>
+                    ))}
                   </div>
                 </>
-              )}
 
               {/* Tip (only if hints enabled) */}
-              {showHints && currentExercise.tip && !wrongResult && (
+              {showHints && currentExercise.tip && (
                 <div className="absolute bottom-3 left-4 right-4">
                   <div className="bg-slate-50 border border-slate-100 rounded-xl p-2 text-center text-xs text-slate-500">
                     💡 {currentExercise.tip}

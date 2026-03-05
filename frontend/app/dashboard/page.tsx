@@ -138,11 +138,11 @@ export default function DashboardPage() {
             <div className="mt-3 w-full">
               <div className="flex items-center gap-2">
                 <div className="flex-1 h-1.5 bg-white/20 rounded-full overflow-hidden">
-                  <div className="h-full bg-white/80 rounded-full transition-all" style={{ width: `${Math.min(d.total_exercises / 10, 1) * 100}%` }} />
+                  <div className="h-full bg-white/80 rounded-full transition-all" style={{ width: `${Math.min(d.total_exercises / 20, 1) * 100}%` }} />
                 </div>
-                <span className="text-xs text-white/70">{d.total_exercises}/10</span>
+                <span className="text-xs text-white/70">{d.total_exercises}/20</span>
               </div>
-              <p className="text-xs text-blue-100 mt-1">Diagnostic en cours</p>
+              <p className="text-xs text-blue-100 mt-1">Test de niveau en cours</p>
             </div>
           )}
         </div>

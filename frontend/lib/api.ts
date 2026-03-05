@@ -81,6 +81,7 @@ export interface NextExercise {
   tip: string | null;
   time_limit_ms: number | null;
   agent_intro: string | null;
+  correct_answer: string | null;
 }
 
 export interface SubmitResult {
@@ -94,6 +95,14 @@ export interface SubmitResult {
   skill_name: string | null;
   skill_score: number | null;
   global_level: number | null;
+}
+
+export interface SmartSeriesResult {
+  is_exercise_request: boolean;
+  exercises: NextExercise[];
+  chat_response: string | null;
+  description: string | null;
+  example_used: string | null;
 }
 
 // ─────────── API ───────────
@@ -114,9 +123,10 @@ export const api = {
   },
 
   // Exercises
-  async getNextExercise(trainingMode?: string): Promise<NextExercise> {
+  async getNextExercise(trainingMode?: string, operationFilter?: string[]): Promise<NextExercise> {
     return apiPost<NextExercise>('/agent/next-exercise', {
       training_mode: trainingMode || null,
+      operation_filter: operationFilter || null,
     });
   },
 
@@ -135,6 +145,21 @@ export const api = {
   // Chat
   async chat(message: string) {
     return apiPost<{ agent_message: string; tips: string[] }>('/agent/chat', { message });
+  },
+
+  // Custom series from example expression
+  async generateCustomSeries(example: string, count: number = 10): Promise<{ exercises: NextExercise[] }> {
+    return apiPost<{ exercises: NextExercise[] }>('/agent/generate-custom-series', { example, count });
+  },
+
+  // Fast skill series: no LLM, just skill + difficulty → exercises instantly
+  async generateSkillSeries(skill: string, difficulty: number, count: number = 10): Promise<{ exercises: NextExercise[] }> {
+    return apiPost<{ exercises: NextExercise[] }>('/agent/generate-skill-series', { skill, difficulty, count });
+  },
+
+  // Smart series: Gemini interprets natural language → exercises or chat
+  async smartSeries(message: string, count: number = 10): Promise<SmartSeriesResult> {
+    return apiPost<SmartSeriesResult>('/agent/smart-series', { message, count });
   },
 
   async getConversationHistory(limit: number = 50) {

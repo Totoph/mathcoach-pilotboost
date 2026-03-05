@@ -116,6 +116,7 @@ class AgentService:
         self,
         user_id: UUID,
         training_mode: Optional[str] = None,
+        operation_filter: Optional[list] = None,
     ) -> NextExerciseResponse:
         instance = await self.get_or_create_instance(user_id)
         profile = self._load_profile(instance.state)
@@ -124,15 +125,27 @@ class AgentService:
         if training_mode:
             profile.training_mode = training_mode
 
-        # Select skill and difficulty
-        skill_name, sub_skill = select_next_skill(profile, profile.training_mode)
-        skill_data = profile.skill_vector.get_skill(skill_name)
-        difficulty = select_next_difficulty(skill_data)
+        # ── Diagnostic mode: cycle through skills to assess broadly ──
+        if not profile.diagnostic_completed and profile.total_exercises < 20 and not training_mode and not operation_filter:
+            all_skills = list(SKILL_DEFINITIONS.keys())
+            # Cycle through skills: exercise 0→skill 0, 1→skill 1, etc. then repeat
+            skill_idx = profile.total_exercises % len(all_skills)
+            skill_name = all_skills[skill_idx]
+            sub_skill = None
+            # Start at difficulty 2 to give a moderate challenge
+            difficulty = 2
+        else:
+            # Select skill and difficulty
+            skill_name, sub_skill = select_next_skill(profile, profile.training_mode, operation_filter)
+            skill_data = profile.skill_vector.get_skill(skill_name)
+            difficulty = select_next_difficulty(skill_data)
 
-        # Check for spaced repetition items due
-        sr_exercise = await self._check_spaced_repetition(
-            UUID(str(instance.user_id)), skill_name
-        )
+        # Check for spaced repetition items due (skip if operation filter is active)
+        sr_exercise = None
+        if not operation_filter:
+            sr_exercise = await self._check_spaced_repetition(
+                UUID(str(instance.user_id)), skill_name
+            )
         if sr_exercise:
             exercise_obj = sr_exercise
         else:
@@ -141,8 +154,15 @@ class AgentService:
         # Get agent intro message
         agent_intro = self._get_intro_message(profile, skill_name, difficulty)
 
-        # Cache the exercise
-        _exercise_cache[exercise_obj.exercise_id] = exercise_obj.to_dict()
+        # Cache the exercise (in-memory + DB for persistence)
+        exercise_dict = exercise_obj.to_dict()
+        _exercise_cache[exercise_obj.exercise_id] = exercise_dict
+
+        # Also persist in agent state so it survives server restarts
+        state_dict = self._save_profile(profile)
+        state_dict["pending_exercise"] = exercise_dict
+        self.supabase.table("agent_instances")\
+            .update({"state": state_dict}).eq("id", str(instance.id)).execute()
 
         return NextExerciseResponse(
             exercise_id=exercise_obj.exercise_id,
@@ -153,6 +173,7 @@ class AgentService:
             tip=exercise_obj.tip,
             time_limit_ms=exercise_obj.time_limit_ms,
             agent_intro=agent_intro,
+            correct_answer=exercise_obj.correct_answer,
         )
 
     async def _check_spaced_repetition(
@@ -201,8 +222,15 @@ class AgentService:
         instance = await self.get_or_create_instance(user_id)
         profile = self._load_profile(instance.state)
 
-        # Get cached exercise
+        # Get cached exercise (in-memory first, then fall back to DB)
         cached = _exercise_cache.get(str(exercise_id))
+        if not cached:
+            # Try to recover from DB state
+            state_data = instance.state.model_dump()
+            pending = state_data.get("pending_exercise")
+            if pending and pending.get("exercise_id") == str(exercise_id):
+                cached = pending
+                _exercise_cache[str(exercise_id)] = cached  # re-populate cache
         if not cached:
             raise ValueError(f"Exercise {exercise_id} not found (expired or invalid)")
 
@@ -254,8 +282,8 @@ class AgentService:
         profile.weaknesses = weaknesses
         profile.focus_areas = select_focus_areas(profile.skill_vector, weaknesses)
 
-        # Check diagnostic completion
-        if not profile.diagnostic_completed and profile.total_exercises >= 10:
+        # Check diagnostic completion (20 questions)
+        if not profile.diagnostic_completed and profile.total_exercises >= 20:
             profile.diagnostic_completed = True
 
         # Update spaced repetition

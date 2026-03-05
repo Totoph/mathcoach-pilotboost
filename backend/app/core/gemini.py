@@ -107,3 +107,68 @@ Explique-lui LA MEILLEURE technique de calcul mental pour résoudre ce calcul.
 Sois concis (3-4 phrases max) avec un exemple pas-à-pas."""
 
     return await generate_agent_response(prompt)
+
+
+async def parse_exercise_intent(user_message: str) -> dict:
+    """Use Gemini to understand if a user message is requesting exercises.
+    
+    Returns a JSON dict with:
+      - is_exercise_request: bool
+      - skill: str | null (one of: addition, subtraction, multiplication, division,
+        tables_1_20, squares_1_30, decomposition, fast_multiplication, estimation,
+        mixed, chain, advanced)
+      - difficulty: int | null (1-5)
+      - example: str | null (if user gave a concrete example expression)
+      - description: str | null (short description of what was requested)
+    """
+    import json
+    
+    prompt = f"""{SYSTEM_PROMPT}
+
+Tu dois analyser le message suivant et déterminer si l'utilisateur demande des exercices de calcul mental.
+
+COMPÉTENCES DISPONIBLES (utilise exactement ces noms) :
+- addition : additions
+- subtraction : soustractions
+- multiplication : multiplications
+- division : divisions
+- tables_1_20 : tables de multiplication (1 à 20)
+- squares_1_30 : carrés de nombres
+- decomposition : décompositions
+- fast_multiplication : multiplications rapides (×5, ×9, ×11, ×25, ×99)
+- estimation : estimations / arrondis
+- mixed : opérations mixtes (2 opérations différentes)
+- chain : chaînes de calcul (plusieurs opérations)
+- advanced : techniques avancées (carrés védiques, multiplication croisée)
+
+DIFFICULTÉ : 1 (facile) à 5 (expert). Déduis du contexte, défaut = 2.
+
+Réponds UNIQUEMENT en JSON valide, rien d'autre :
+{{"is_exercise_request": true/false, "skill": "nom_skill" ou null, "difficulty": 1-5 ou null, "example": "expression" ou null, "description": "ce que veut l'élève" ou null}}
+
+Exemples :
+- "donne moi des carrés" → {{"is_exercise_request": true, "skill": "squares_1_30", "difficulty": 2, "example": null, "description": "Série de carrés"}}
+- "je veux des multiplications difficiles" → {{"is_exercise_request": true, "skill": "multiplication", "difficulty": 4, "example": null, "description": "Multiplications difficiles"}}
+- "tables de 7" → {{"is_exercise_request": true, "skill": "tables_1_20", "difficulty": 2, "example": null, "description": "Tables de 7"}}
+- "34-54+67-23" → {{"is_exercise_request": true, "skill": null, "difficulty": null, "example": "34-54+67-23", "description": "Chaîne d'additions/soustractions"}}
+- "comment calculer 23×17 ?" → {{"is_exercise_request": false, "skill": null, "difficulty": null, "example": null, "description": null}}
+- "c'est quoi la technique des doubles ?" → {{"is_exercise_request": false, "skill": null, "difficulty": null, "example": null, "description": null}}
+
+Message utilisateur : {user_message}
+
+JSON :"""
+
+    try:
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        # Clean up: remove markdown code fences if present
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+        result = json.loads(text)
+        return result
+    except Exception as e:
+        print(f"Gemini parse_exercise_intent error: {e}")
+        return {"is_exercise_request": False, "skill": None, "difficulty": None, "example": None, "description": None}
