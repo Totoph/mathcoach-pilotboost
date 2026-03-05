@@ -6,9 +6,11 @@ import Link from "next/link";
 import { ArrowLeft, Zap, Target, TrendingUp, CheckCircle, AlertCircle } from "lucide-react";
 import { getUser } from "@/lib/supabase";
 import { api } from "@/lib/api";
+import { useTranslation } from "@/lib/i18n";
 
 export default function StatsPage() {
   const router = useRouter();
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [agentState, setAgentState] = useState<any>(null);
 
@@ -16,7 +18,7 @@ export default function StatsPage() {
     async function init() {
       const user = await getUser();
       if (!user) {
-        router.push("/auth/login");
+        router.push("/auth");
         return;
       }
 
@@ -39,7 +41,7 @@ export default function StatsPage() {
         <div className="bento-card px-8 py-6">
           <div className="flex items-center gap-3">
             <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            <span className="text-slate-500 font-medium">Chargement...</span>
+            <span className="text-slate-500 font-medium">{t("loading")}</span>
           </div>
         </div>
       </div>
@@ -62,8 +64,8 @@ export default function StatsPage() {
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Statistiques</h1>
-            <p className="text-sm text-slate-400">Vue d'ensemble de votre progression</p>
+            <h1 className="text-2xl font-bold text-slate-900">{t("stats_title")}</h1>
+            <p className="text-sm text-slate-400">{t("stats_subtitle")}</p>
           </div>
         </div>
       </div>
@@ -77,7 +79,7 @@ export default function StatsPage() {
           <div className="text-3xl font-extrabold text-slate-900 mb-1">
             {recent_performance.total_exercises}
           </div>
-          <p className="text-sm text-slate-400">Exercices réalisés</p>
+          <p className="text-sm text-slate-400">{t("stats_exercises_done")}</p>
         </div>
 
         <div className="bento-card p-6 flex flex-col items-center text-center">
@@ -87,7 +89,7 @@ export default function StatsPage() {
           <div className="text-3xl font-extrabold text-slate-900 mb-1">
             {recent_performance.recent_accuracy}%
           </div>
-          <p className="text-sm text-slate-400">Précision récente</p>
+          <p className="text-sm text-slate-400">{t("stats_recent_accuracy")}</p>
         </div>
 
         <div className="bento-card p-6 flex flex-col items-center text-center">
@@ -97,7 +99,7 @@ export default function StatsPage() {
           <div className="text-3xl font-extrabold text-slate-900 mb-1">
             {instance.current_level}
           </div>
-          <p className="text-sm text-slate-400">Niveau actuel</p>
+          <p className="text-sm text-slate-400">{t("stats_current_level")}</p>
         </div>
       </div>
 
@@ -106,7 +108,7 @@ export default function StatsPage() {
         <div className="bento-card p-6">
           <div className="flex items-center gap-2 mb-5">
             <span className="w-2 h-2 rounded-full bg-green-500" />
-            <h3 className="font-bold text-slate-900">Points forts</h3>
+            <h3 className="font-bold text-slate-900">{t("stats_strengths")}</h3>
           </div>
           {instance.state.strengths.length > 0 ? (
             <div className="space-y-3">
@@ -120,7 +122,7 @@ export default function StatsPage() {
           ) : (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <div className="text-3xl mb-2">🏋️</div>
-              <p className="text-sm text-slate-400">Continue pour identifier tes forces !</p>
+              <p className="text-sm text-slate-400">{t("stats_strengths_empty")}</p>
             </div>
           )}
         </div>
@@ -128,7 +130,7 @@ export default function StatsPage() {
         <div className="bento-card p-6">
           <div className="flex items-center gap-2 mb-5">
             <span className="w-2 h-2 rounded-full bg-orange-500" />
-            <h3 className="font-bold text-slate-900">À travailler</h3>
+            <h3 className="font-bold text-slate-900">{t("stats_weaknesses")}</h3>
           </div>
           {instance.state.weaknesses.length > 0 ? (
             <div className="space-y-3">
@@ -142,7 +144,7 @@ export default function StatsPage() {
           ) : (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <div className="text-3xl mb-2">🎉</div>
-              <p className="text-sm text-slate-400">Aucune faiblesse détectée !</p>
+              <p className="text-sm text-slate-400">{t("stats_weaknesses_empty")}</p>
             </div>
           )}
         </div>
@@ -153,7 +155,7 @@ export default function StatsPage() {
         href="/train"
         className="bento-card p-6 flex items-center justify-center text-center bg-gradient-to-r from-primary to-blue-600 border-0 group"
       >
-        <span className="text-white font-semibold text-lg">Continuer l'entraînement →</span>
+        <span className="text-white font-semibold text-lg">{t("stats_continue")}</span>
       </Link>
     </div>
   );

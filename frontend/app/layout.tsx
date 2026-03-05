@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import FloatingMenuBar from "@/components/FloatingMenuBar";
+import ClientProviders from "./providers";
 
 export const metadata: Metadata = {
   title: "MathCoach by PilotBoost",
@@ -13,10 +13,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="fr">
+    <html lang="fr" suppressHydrationWarning>
       <body className="antialiased min-h-screen bg-[#F8FAFC]">
-        <FloatingMenuBar />
-        <main className="pt-24 pb-2 px-6 max-w-6xl mx-auto">{children}</main>
+        <ClientProviders>{children}</ClientProviders>
       </body>
     </html>
   );

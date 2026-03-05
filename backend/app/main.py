@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from app.core.config import get_settings
-from app.api.routes import auth, exercises, users, agent
+from app.api.routes import auth, exercises, users, agent, payments
 import logging
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(exercises.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(agent.router, prefix="/api/v1")  # ← Agent IA routes
+app.include_router(payments.router, prefix="/api/v1")  # ← Stripe payments
 
 
 @app.get("/")

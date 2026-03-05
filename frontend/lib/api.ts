@@ -38,6 +38,17 @@ async function apiPost<T = any>(path: string, body: any = {}): Promise<T> {
 
 // ─────────── Types ───────────
 
+export interface SubscriptionStatus {
+  plan: string;
+  active: boolean;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  total_exercises: number;
+  exercises_limit: number;
+}
+
 export interface SkillScore {
   name: string;
   label: string;
@@ -179,5 +190,22 @@ export const api = {
   // Training mode
   async setTrainingMode(mode: string) {
     return apiPost('/agent/set-mode', { mode });
+  },
+
+  // Payments
+  async getSubscriptionStatus(): Promise<SubscriptionStatus> {
+    return apiGet<SubscriptionStatus>('/payments/status');
+  },
+
+  async createCheckout(plan: string): Promise<{ checkout_url: string }> {
+    return apiPost<{ checkout_url: string }>('/payments/create-checkout', { plan });
+  },
+
+  async cancelSubscription(): Promise<{ status: string }> {
+    return apiPost<{ status: string }>('/payments/cancel');
+  },
+
+  async verifyCheckoutSession(sessionId: string): Promise<{ status: string; plan?: string }> {
+    return apiGet<{ status: string; plan?: string }>(`/payments/verify-session?session_id=${sessionId}`);
   },
 };

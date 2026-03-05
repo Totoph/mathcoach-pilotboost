@@ -7,6 +7,8 @@ import { ArrowLeft, Send, Clock, Sparkles, Minus, Info, Eye, EyeOff, ChevronRigh
 import { getUser } from "@/lib/supabase";
 import { api, NextExercise, SubmitResult } from "@/lib/api";
 import VoiceTrainer from "@/components/VoiceTrainer";
+import PaywallPopup from "@/components/PaywallPopup";
+import { useTranslation } from "@/lib/i18n";
 
 // ─── Types ───
 
@@ -100,6 +102,14 @@ export default function TrainPage() {
   const [speedChoices, setSpeedChoices] = useState<string[]>([]);
   const [speedPicked, setSpeedPicked] = useState<string | null>(null);
 
+  // Paywall
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  const FREE_LIMIT = 100;
+
+  // i18n
+  const { t } = useTranslation();
+
   // Ref to avoid stale closure in auto-submit effect
   const exerciseRef = useRef<NextExercise | null>(null);
 
@@ -145,7 +155,7 @@ export default function TrainPage() {
   useEffect(() => {
     async function init() {
       const user = await getUser();
-      if (!user) { router.push("/auth/login"); return; }
+      if (!user) { router.push("/auth"); return; }
 
       // Read mode from URL immediately so loadNextExercise has it
       const urlMode = searchParams.get("mode");
@@ -156,19 +166,29 @@ export default function TrainPage() {
         setTotalExercises(state.instance.state.total_exercises || 0);
         setGlobalLevel(state.instance.state.global_level || 0);
       } catch {}
+      // Check subscription status
+      try {
+        const sub = await api.getSubscriptionStatus();
+        if (sub.plan !== "free" && sub.active) {
+          setIsPremium(true);
+        } else if (sub.total_exercises >= 100) {
+          setShowPaywall(true);
+        }
+      } catch {}
       // Fetch baseline skill scores for delta tracking
       try {
         const dash = await api.getDashboard();
         const before: Record<string, number> = {};
         dash.skills.forEach((s) => { before[s.name] = s.score; });
         setSkillScoresBefore(before);
-        // Store weaknesses for targeted training
+        // Store weaknesses for targeted training — always take the 3 lowest skills
         const weakSkills = dash.skills
-          .filter((s) => s.score > 0 && s.score < 40 && s.attempts > 3)
+          .filter((s) => s.attempts >= 1)
           .sort((a, b) => a.score - b.score)
-          .slice(0, 3)
-          .map((s) => ({ name: s.name, label: s.label, score: Math.round(s.score) }));
-        setUserWeaknesses(weakSkills);
+          .slice(0, 3);
+        setUserWeaknesses(
+          weakSkills.map((s) => ({ name: s.name, label: s.label, score: Math.round(s.score) }))
+        );
       } catch {}
       await loadNextExercise({ mode: urlMode || undefined });
       setLoading(false);
@@ -266,7 +286,13 @@ export default function TrainPage() {
     if (exercise.correct_answer && finalAnswer === exercise.correct_answer) {
       setCorrectDisplay(finalAnswer);
       setAnswerState("correct");
-      setTotalExercises((prev) => prev + 1);
+      setTotalExercises((prev) => {
+        const next = prev + 1;
+        if (!isPremium && next >= FREE_LIMIT) {
+          setTimeout(() => setShowPaywall(true), 600);
+        }
+        return next;
+      });
 
       const sr: SeriesResult = {
         question: exercise.question,
@@ -951,6 +977,20 @@ export default function TrainPage() {
 
   return (
     <div className="h-[calc(100vh-6.5rem)] flex flex-col overflow-hidden">
+      {/* Paywall Popup */}
+      <PaywallPopup
+        open={showPaywall}
+        onClose={() => setShowPaywall(false)}
+        onSelectPlan={async (plan) => {
+          try {
+            const { checkout_url } = await api.createCheckout(plan);
+            if (checkout_url) window.location.href = checkout_url;
+          } catch (e) {
+            console.error("Checkout error:", e);
+          }
+        }}
+      />
+
       {/* Hidden input for keyboard capture */}
       <input
         ref={inputRef}
@@ -1176,7 +1216,7 @@ export default function TrainPage() {
               <input type="text" value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); handleSendChat(); } }}
-                placeholder="Ex: carrés, 34+56-12, tables de 9..."
+                placeholder="Pose-moi une question..."
                 className="flex-1 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:border-primary focus:outline-none text-sm" />
               <button onClick={handleSendChat}
                 className="p-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all">

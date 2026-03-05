@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { ArrowLeft, BookOpen, Lightbulb, Calculator, Zap } from "lucide-react";
+import { useTranslation } from "@/lib/i18n";
 
 interface Technique {
   title: string;
@@ -202,6 +203,7 @@ const CATEGORY_COLORS: Record<string, { bg: string; text: string; icon: string }
 
 export default function TechniquesPage() {
   const router = useRouter();
+  const { t } = useTranslation();
 
   // Group by category
   const categories = Array.from(new Set(TECHNIQUES.map((t) => t.category)));
@@ -217,10 +219,10 @@ export default function TechniquesPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <BookOpen className="w-6 h-6 text-emerald-600" />
-            Techniques de calcul mental
+            {t("tech_title")}
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Maîtrise ces astuces pour calculer plus vite et plus efficacement
+            {t("tech_subtitle")}
           </p>
         </div>
       </div>
@@ -251,7 +253,7 @@ export default function TechniquesPage() {
                   <div className="bg-slate-50 rounded-xl p-3 mb-3">
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
-                      <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Exemple</span>
+                      <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">{t("tech_example")}</span>
                     </div>
                     <p className="text-sm font-mono font-bold text-slate-900">{tech.example}</p>
                   </div>
@@ -277,11 +279,11 @@ export default function TechniquesPage() {
       {/* CTA */}
       <div className="bento-card p-6 text-center bg-gradient-to-br from-emerald-500 to-teal-600 border-0">
         <Zap className="w-8 h-8 text-white/80 mx-auto mb-2" />
-        <h3 className="text-lg font-bold text-white mb-1">Prêt à pratiquer ?</h3>
-        <p className="text-emerald-100 text-sm mb-4">Mets ces techniques en application</p>
+        <h3 className="text-lg font-bold text-white mb-1">{t("tech_cta_title")}</h3>
+        <p className="text-emerald-100 text-sm mb-4">{t("tech_cta_desc")}</p>
         <button onClick={() => router.push("/train")}
           className="px-6 py-2.5 bg-white text-emerald-700 rounded-xl font-bold text-sm hover:bg-emerald-50 transition-all">
-          Commencer l'entraînement
+          {t("tech_cta_btn")}
         </button>
       </div>
     </div>

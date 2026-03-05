@@ -3,20 +3,23 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, LayoutDashboard, User, Dumbbell } from "lucide-react";
-
-const NAV_ITEMS = [
-  { href: "/", label: "Accueil", icon: Home },
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/train", label: "S'entraîner", icon: Dumbbell },
-  { href: "/profile", label: "Profil", icon: User },
-];
+import { useTranslation } from "@/lib/i18n";
+import LanguageSwitcher from "./LanguageSwitcher";
 
 export default function FloatingMenuBar() {
   const pathname = usePathname();
+  const { t } = useTranslation();
+
+  const NAV_ITEMS = [
+    { href: "/", label: t("nav_home"), icon: Home },
+    { href: "/dashboard", label: t("nav_dashboard"), icon: LayoutDashboard },
+    { href: "/train", label: t("nav_train"), icon: Dumbbell },
+    { href: "/profile", label: t("nav_profile"), icon: User },
+  ];
 
   return (
     <nav className="fixed top-5 left-1/2 -translate-x-1/2 z-50">
-      <div className="bg-white/60 backdrop-blur-2xl rounded-2xl border border-white/80 shadow-[0_8px_32px_rgba(0,0,0,0.08)] px-2 py-2">
+      <div className="bg-white/60 backdrop-blur-2xl rounded-2xl border border-white/80 shadow-[0_8px_32px_rgba(0,0,0,0.08)] px-2 py-2 flex items-center gap-1">
         <ul className="flex items-center gap-1">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href;
@@ -39,6 +42,9 @@ export default function FloatingMenuBar() {
             );
           })}
         </ul>
+        <div className="ml-1">
+          <LanguageSwitcher />
+        </div>
       </div>
     </nav>
   );
