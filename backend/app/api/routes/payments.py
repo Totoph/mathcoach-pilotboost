@@ -68,9 +68,16 @@ async def get_subscription_status(request: Request):
     # Get subscription from supabase
     result = sb.table("subscriptions").select("*").eq("user_id", user_id).execute()
     
-    # Get total exercises count
-    exercises_result = sb.table("exercise_performances").select("id", count="exact").eq("user_id", user_id).execute()
-    total_exercises = exercises_result.count or 0
+    # Get total exercises count via agent_instances → exercise_performances
+    total_exercises = 0
+    try:
+        instance_result = sb.table("agent_instances").select("id").eq("user_id", user_id).execute()
+        if instance_result.data and len(instance_result.data) > 0:
+            agent_id = instance_result.data[0]["id"]
+            exercises_result = sb.table("exercise_performances").select("id", count="exact").eq("agent_instance_id", agent_id).execute()
+            total_exercises = exercises_result.count or 0
+    except Exception as e:
+        logger.warning(f"Could not count exercises for user {user_id}: {e}")
     
     if result.data and len(result.data) > 0:
         sub = result.data[0]
