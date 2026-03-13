@@ -15,11 +15,11 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="h-[calc(100vh-6.5rem)] flex flex-col gap-3">
+    <div className="flex flex-col gap-3 pb-4 overflow-y-auto lg:h-[calc(100vh-6.5rem)] lg:overflow-hidden lg:pb-0">
       {/* Hero Section - Bento Style */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 min-h-0">
+      <div className="flex-1">
         {/* Main Hero Card */}
-        <div className="lg:col-span-2 bento-card p-8 lg:p-10 flex flex-col justify-center animate-fade-in-up">
+        <div className="bento-card p-5 sm:p-8 lg:p-10 flex flex-col items-center justify-center text-center h-full animate-fade-in-up">
           <div className="inline-flex items-center gap-2 bg-primary/10 text-primary rounded-full px-3.5 py-1 text-sm font-medium mb-4 w-fit">
             <Sparkles className="w-4 h-4" />
             {t("home_badge")}
@@ -32,7 +32,7 @@ export default function Home() {
           <p className="text-base text-slate-500 max-w-lg mb-6 leading-relaxed">
             {t("home_desc")}
           </p>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-3 justify-center">
             {loggedIn ? (
               <Link href="/train" className="btn-gradient inline-flex items-center gap-2">
                 {t("home_train")}
@@ -55,25 +55,10 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Side stat cards */}
-        <div className="flex flex-col gap-3">
-          <div className="bento-card p-4 flex-1 flex flex-col justify-center items-center text-center animate-fade-in-up" style={{ animationDelay: "0.1s" }}>
-            <div className="text-4xl font-extrabold text-primary mb-1">{t("home_ai_label")}</div>
-            <p className="text-xs text-slate-500">{t("home_ai_desc")}</p>
-          </div>
-          <div className="bento-card p-4 flex-1 flex flex-col justify-center items-center text-center animate-fade-in-up" style={{ animationDelay: "0.2s" }}>
-            <div className="text-4xl font-extrabold text-secondary mb-1">{t("home_levels")}</div>
-            <p className="text-xs text-slate-500">{t("home_levels_desc")}</p>
-          </div>
-          <div className="bento-card p-4 flex-1 flex flex-col justify-center items-center text-center bg-gradient-to-br from-slate-900 to-slate-800 border-slate-700 animate-fade-in-up" style={{ animationDelay: "0.3s" }}>
-            <div className="text-4xl font-extrabold text-white mb-1">{t("home_exercises")}</div>
-            <p className="text-xs text-slate-400">{t("home_exercises_desc")}</p>
-          </div>
-        </div>
       </div>
 
       {/* Features Bento Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <FeatureCard
           icon={<Brain className="w-5 h-5" />}
           title={t("home_feature_diag")}

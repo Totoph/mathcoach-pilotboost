@@ -211,14 +211,14 @@ export default function TechniquesPage() {
   return (
     <div className="space-y-6 pb-12">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-start gap-3">
         <button onClick={() => router.back()}
-          className="p-2 rounded-xl hover:bg-slate-100 transition-all">
+          className="p-2 rounded-xl hover:bg-slate-100 transition-all flex-shrink-0 mt-0.5">
           <ArrowLeft className="w-5 h-5 text-slate-600" />
         </button>
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <BookOpen className="w-6 h-6 text-emerald-600" />
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2 flex-wrap">
+            <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600 flex-shrink-0" />
             {t("tech_title")}
           </h1>
           <p className="text-sm text-slate-500 mt-1">

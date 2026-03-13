@@ -135,7 +135,7 @@ export default function DashboardPage() {
       />
       {/* ──── Row 1: Welcome + Level ──── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 bento-card p-8">
+        <div className="lg:col-span-2 bento-card p-5 sm:p-8">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-sm text-slate-400 font-medium mb-1">{t("dash_welcome")}</p>
@@ -220,7 +220,7 @@ function SkillBar({ skill }: { skill: SkillScore }) {
   const pct = Math.min(skill.score || 0, 100);
   return (
     <div className="flex items-center gap-3">
-      <div className="w-[130px] text-xs font-medium text-slate-700 truncate flex items-center gap-1.5">
+      <div className="w-20 sm:w-[130px] text-xs font-medium text-slate-700 truncate flex items-center gap-1.5">
         {skill.label}
         {skill.is_automated && <span title="Automatisé" className="text-green-500">⚡</span>}
         {skill.is_plateau && <span title="Plateau" className="text-orange-500">⏸</span>}
@@ -236,11 +236,11 @@ function SkillBar({ skill }: { skill: SkillScore }) {
 
 function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) {
   return (
-    <div className="bento-card p-5 flex items-center gap-4">
-      <div className={`w-11 h-11 rounded-xl ${color} flex items-center justify-center`}>{icon}</div>
-      <div>
-        <div className="text-2xl font-bold text-slate-900">{value}</div>
-        <div className="text-xs text-slate-400 font-medium">{label}</div>
+    <div className="bento-card p-3 sm:p-5 flex items-center gap-3 sm:gap-4">
+      <div className={`w-9 h-9 sm:w-11 sm:h-11 rounded-xl ${color} flex items-center justify-center flex-shrink-0`}>{icon}</div>
+      <div className="min-w-0">
+        <div className="text-xl sm:text-2xl font-bold text-slate-900 truncate">{value}</div>
+        <div className="text-xs text-slate-400 font-medium truncate">{label}</div>
       </div>
     </div>
   );

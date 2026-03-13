@@ -58,7 +58,7 @@ export default function AuthPage() {
           {t("back")}
         </Link>
 
-        <div className="bento-card p-8">
+        <div className="bento-card p-5 sm:p-8">
           {/* Tab toggle */}
           <div className="flex items-center bg-slate-100 rounded-xl p-1 mb-8">
             <button

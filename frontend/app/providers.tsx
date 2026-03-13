@@ -8,7 +8,7 @@ export default function ClientProviders({ children }: { children: React.ReactNod
   return (
     <I18nProvider>
       <FloatingMenuBar />
-      <main className="pt-24 pb-2 px-6 max-w-6xl mx-auto">{children}</main>
+      <main className="pt-24 pb-2 px-3 sm:px-6 max-w-6xl mx-auto">{children}</main>
       <FeedbackWidget />
     </I18nProvider>
   );

@@ -88,24 +88,36 @@ export default function FeedbackWidget() {
     <div className="fixed right-0 top-1/2 -translate-y-1/2 z-50" ref={panelRef}>
       {/* ─── Collapsed tabs (always visible when panel is closed) ─── */}
       {!expandedTab && (
-        <div className="flex flex-col gap-1.5">
-          {(["general", "feature", "bug"] as FeedbackType[]).map((type) => (
-            <button
-              key={type}
-              onClick={() => handleTabClick(type)}
-              className="bg-white/90 backdrop-blur-xl border border-slate-200 rounded-l-xl px-3 py-2.5 text-xs font-medium text-slate-600 hover:bg-primary hover:text-white hover:border-primary transition-all duration-200 shadow-md text-right whitespace-nowrap"
-              style={{ writingMode: "horizontal-tb" }}
-            >
-              {tabLabels[type]}
-            </button>
-          ))}
-        </div>
+        <>
+          {/* Mobile: single icon button */}
+          <button
+            onClick={() => handleTabClick("general")}
+            className="sm:hidden bg-white/90 backdrop-blur-xl border border-slate-200 rounded-l-xl p-2.5 text-slate-600 hover:bg-primary hover:text-white hover:border-primary transition-all duration-200 shadow-md"
+            aria-label="Feedback"
+          >
+            <MessageSquare className="w-4 h-4" />
+          </button>
+
+          {/* Desktop: 3 text tabs */}
+          <div className="hidden sm:flex flex-col gap-1.5">
+            {(["general", "feature", "bug"] as FeedbackType[]).map((type) => (
+              <button
+                key={type}
+                onClick={() => handleTabClick(type)}
+                className="bg-white/90 backdrop-blur-xl border border-slate-200 rounded-l-xl px-3 py-2.5 text-xs font-medium text-slate-600 hover:bg-primary hover:text-white hover:border-primary transition-all duration-200 shadow-md text-right whitespace-nowrap"
+                style={{ writingMode: "horizontal-tb" }}
+              >
+                {tabLabels[type]}
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       {/* ─── Expanded panel ─── */}
       {expandedTab && (
         <div className="mr-0 animate-fade-in-up">
-          <div className="bg-white/95 backdrop-blur-2xl border border-slate-200 rounded-l-2xl shadow-xl w-80 overflow-hidden">
+          <div className="bg-white/95 backdrop-blur-2xl border border-slate-200 rounded-l-2xl shadow-xl w-72 sm:w-80 overflow-hidden">
             {/* Header */}
             <div className="p-5 pb-3">
               <div className="flex items-start justify-between mb-1">

@@ -19,6 +19,7 @@ import {
   Equal,
   Mic,
   MicOff,
+  X,
 } from "lucide-react";
 import { getUser } from "@/lib/supabase";
 import { api, NextExercise } from "@/lib/api";
@@ -129,6 +130,9 @@ export default function TrainClient() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatInput, setChatInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Mobile coach bottom sheet
+  const [coachOpen, setCoachOpen] = useState(false);
 
   // Input ref for keyboard focus
   const inputRef = useRef<HTMLInputElement>(null);
@@ -925,6 +929,7 @@ export default function TrainClient() {
   }
 
   return (
+    <>
     <div className="h-[calc(100vh-6.5rem)] flex flex-col overflow-hidden">
       <PaywallPopup
         open={showPaywall}
@@ -942,14 +947,15 @@ export default function TrainClient() {
       <input
         ref={inputRef}
         type="text"
+        inputMode="none"
         className="absolute opacity-0 w-0 h-0"
         onKeyDown={handleKeyDown}
         autoFocus
         tabIndex={0}
       />
 
-      <div className="flex-shrink-0 grid grid-cols-4 gap-2.5 p-2.5">
-        <div className="col-span-2 bento-card p-2.5 flex items-center gap-3">
+      <div className="flex-shrink-0 grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-2.5">
+        <div className="col-span-2 bento-card p-2.5 flex items-center gap-2 overflow-hidden">
           <div className="flex items-center gap-1.5">
             {[{ key: "free", label: "Libre" }, { key: "tables", label: "Tables" }].map((m) => (
               <button
@@ -1082,7 +1088,7 @@ export default function TrainClient() {
       </div>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-2.5 px-2.5 pb-2.5 min-h-0">
-        <div className="lg:col-span-1 bento-card flex flex-col min-h-0 overflow-hidden">
+        <div className="hidden lg:flex lg:col-span-1 bento-card flex-col min-h-0 overflow-hidden">
           {voiceMode ? (
             <VoiceTrainer
               currentExercise={currentExercise}
@@ -1187,13 +1193,13 @@ export default function TrainClient() {
           )}
         </div>
 
-        <div className="lg:col-span-3 bento-card flex flex-col items-center justify-center relative min-h-0 overflow-hidden" onClick={() => inputRef.current?.focus()}>
+        <div className="col-span-1 lg:col-span-3 bento-card flex flex-col items-center justify-center relative min-h-0 overflow-hidden" onClick={() => inputRef.current?.focus()}>
           {currentExercise && (
             <>
               <div className="text-5xl lg:text-7xl font-extrabold text-slate-900 mb-5 text-center tracking-tight select-none">{currentExercise.question}</div>
 
               {trainingMode === "speed" ? (
-                <div className="grid grid-cols-2 gap-3 max-w-xs w-full">
+                <div className="grid grid-cols-2 gap-3 w-full max-w-xs sm:max-w-sm px-4">
                   {speedChoices.map((choice) => {
                     const isCorrectChoice = choice === currentExercise.correct_answer;
                     const isPicked = speedPicked === choice;
@@ -1206,7 +1212,7 @@ export default function TrainClient() {
                         key={choice}
                         onClick={() => handleSpeedChoice(choice)}
                         disabled={speedPicked !== null}
-                        className={`py-5 rounded-2xl font-bold text-2xl transition-all duration-150 select-none ${btnClass}`}
+                        className={`py-6 rounded-2xl font-bold text-2xl sm:text-3xl transition-all duration-150 select-none ${btnClass}`}
                       >
                         {choice}
                       </button>
@@ -1215,7 +1221,7 @@ export default function TrainClient() {
                 </div>
               ) : (
                 <>
-                  <div className="mb-4 min-w-[260px]">
+                  <div className="mb-4 w-full max-w-xs sm:max-w-sm px-4">
                     <div
                       className={`rounded-2xl border-2 px-8 py-3 text-center text-4xl font-mono min-h-[56px] flex items-center justify-center transition-all duration-150 bg-white ${
                         answerState === "correct" ? "border-green-400 bg-green-50/50" : "border-slate-200"
@@ -1225,17 +1231,17 @@ export default function TrainClient() {
                         {displayAnswer || <span className="text-slate-300">?</span>}
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-400 text-center mt-1.5">Clavier ou pavé numérique</p>
+                    <p className="hidden sm:block text-[11px] text-slate-400 text-center mt-1.5">Clavier ou pavé numérique</p>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-3 gap-2 w-full max-w-xs sm:max-w-sm px-4">
                     {["7", "8", "9", "4", "5", "6", "1", "2", "3", "±", "0", "DEL"].map((key) => (
                       <button
                         key={key}
                         onClick={() => handleNumpadClick(key)}
-                        className={`w-[80px] h-[64px] rounded-2xl font-bold text-xl transition-all duration-100 select-none ${
+                        className={`h-14 sm:h-16 rounded-2xl font-bold text-xl transition-all duration-100 select-none ${
                           key === "DEL"
-                            ? "bg-slate-200 text-slate-600 hover:bg-slate-300"
+                            ? "bg-slate-200 text-slate-600 hover:bg-slate-300 active:bg-slate-400"
                             : key === "±"
                               ? `${isNegative ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-600"} hover:bg-blue-400 hover:text-white`
                               : "bg-white border border-slate-200 text-slate-800 hover:bg-slate-50 active:bg-slate-100"
@@ -1258,6 +1264,140 @@ export default function TrainClient() {
         </div>
       </div>
     </div>
+
+      {/* FAB — Coach IA (mobile only) */}
+      <button
+        onClick={() => setCoachOpen(true)}
+        className="fixed bottom-6 right-6 z-50 lg:hidden w-14 h-14 bg-gradient-to-br from-purple-500 to-purple-700 text-white rounded-full shadow-xl flex items-center justify-center active:scale-95 transition-all"
+        aria-label="Ouvrir le Coach IA"
+      >
+        <Sparkles className="w-6 h-6" />
+        {messages.length > 0 && (
+          <span className="absolute -top-1 -right-1 w-5 h-5 bg-orange-500 rounded-full text-[10px] font-bold flex items-center justify-center">
+            {messages.length}
+          </span>
+        )}
+      </button>
+
+      {/* Overlay */}
+      {coachOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          onClick={() => setCoachOpen(false)}
+        />
+      )}
+
+      {/* Bottom Sheet — Coach IA (mobile only) */}
+      <div
+        className={`fixed inset-x-0 bottom-0 z-50 lg:hidden bg-white rounded-t-3xl shadow-2xl flex flex-col transition-transform duration-300 ease-out ${
+          coachOpen ? "translate-y-0" : "translate-y-full"
+        }`}
+        style={{ maxHeight: "78vh" }}
+      >
+        {/* Drag handle */}
+        <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
+          <div className="w-10 h-1 bg-slate-300 rounded-full" />
+        </div>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-500" />
+            <h2 className="font-bold text-sm text-slate-900">Coach IA</h2>
+          </div>
+          <button
+            onClick={() => setCoachOpen(false)}
+            className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+          >
+            <X className="w-4 h-4 text-slate-500" />
+          </button>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
+          {messages.length === 0 && (
+            <div className="mt-3 space-y-4">
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center">Types de calcul</p>
+                <div className="flex flex-wrap gap-1.5 justify-center">
+                  {SUGGESTION_CHIPS.map((chip) => (
+                    <button
+                      key={chip.label}
+                      onClick={() => setChatInput(chip.text)}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-medium text-slate-600 transition-all border border-slate-200 hover:border-slate-300"
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center">Questions fréquentes</p>
+                <div className="flex flex-col gap-1">
+                  {COMMON_QUESTIONS.map((q) => (
+                    <button
+                      key={q.label}
+                      onClick={() => setChatInput(q.text)}
+                      className="px-3 py-2 rounded-lg bg-purple-50 hover:bg-purple-100 text-xs font-medium text-purple-700 transition-all border border-purple-100 hover:border-purple-200 text-left"
+                    >
+                      {q.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {userWeaknesses.length > 0 && (
+                <div className="pt-1">
+                  <button
+                    onClick={() => { handleWeaknessTraining(); setCoachOpen(false); }}
+                    className="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white text-xs font-bold shadow-md hover:shadow-lg transition-all active:scale-95"
+                  >
+                    <span>🎯</span>
+                    <span>Travailler mes faiblesses</span>
+                  </button>
+                  <p className="text-[10px] text-slate-400 text-center mt-1.5">
+                    {userWeaknesses.map((w) => `${w.label} (${w.score})`).join(" · ")}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          {messages.map((msg, i) => (
+            <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div
+                className={`max-w-[90%] rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap ${
+                  msg.role === "user" ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-700 border border-slate-100"
+                }`}
+              >
+                {msg.message}
+              </div>
+            </div>
+          ))}
+          <div ref={chatEndRef} />
+        </div>
+
+        {/* Chat input */}
+        <div className="flex-shrink-0 p-3 border-t border-slate-100">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.stopPropagation();
+                  handleSendChat();
+                }
+              }}
+              placeholder="Pose-moi une question..."
+              className="flex-1 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:border-primary focus:outline-none text-sm"
+            />
+            <button onClick={handleSendChat} className="p-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all">
+              <Send className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
