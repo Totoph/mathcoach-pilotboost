@@ -2,10 +2,22 @@
 Gemini AI client wrapper — V2 with mental math expertise
 """
 import google.generativeai as genai
-from app.core.config import get_settings
 
-settings = get_settings()
-genai.configure(api_key=settings.gemini_api_key)
+import os
+
+_configured = False
+
+
+def _ensure_configured() -> None:
+    """Configure Gemini lazily so app boot doesn't fail without keys."""
+    global _configured
+    if _configured:
+        return
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is required")
+    genai.configure(api_key=api_key)
+    _configured = True
 
 # Configuration du modèle
 generation_config = {
@@ -45,6 +57,7 @@ async def generate_agent_response(
     Génère une réponse de l'agent avec Gemini.
     """
     try:
+        _ensure_configured()
         full_prompt = f"""{SYSTEM_PROMPT}
 
 {context if context else ""}
@@ -158,6 +171,7 @@ Message utilisateur : {user_message}
 JSON :"""
 
     try:
+        _ensure_configured()
         response = model.generate_content(prompt)
         text = response.text.strip()
         # Clean up: remove markdown code fences if present

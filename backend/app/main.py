@@ -2,12 +2,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from app.core.config import get_settings
 from app.api.routes import auth, exercises, users, agent, payments
 import logging
+import os
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 app = FastAPI(
     title="MathCoach by PilotBoost",
@@ -27,7 +26,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 # CORS - permissif en développement
-origins = ["*"] if settings.env == "development" else [settings.frontend_url]
+env = os.getenv("ENV", "development")
+frontend_url = os.getenv("FRONTEND_URL", "https://mathcoach.pilotboost.fr")
+origins = ["*"] if env == "development" else [frontend_url]
 
 app.add_middleware(
     CORSMiddleware,
