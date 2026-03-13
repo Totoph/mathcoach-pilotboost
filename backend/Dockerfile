@@ -23,4 +23,4 @@ EXPOSE 8000
 
 # 7. Use the "Shell Form" for CMD to correctly interpret the $PORT variable
 # This removes the need for ["sh", "-c", ...] which can sometimes swallow signals
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
