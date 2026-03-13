@@ -41,6 +41,13 @@ env_frontend = os.getenv("FRONTEND_URL")
 if env_frontend and env_frontend not in origins:
     origins.append(env_frontend)
 
+# Allow Vercel preview URLs (pattern: *.vercel.app)
+env_vercel_url = os.getenv("VERCEL_URL")
+if env_vercel_url:
+    vercel_origin = f"https://{env_vercel_url}" if not env_vercel_url.startswith("http") else env_vercel_url
+    if vercel_origin not in origins:
+        origins.append(vercel_origin)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

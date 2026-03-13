@@ -4,5 +4,8 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 healthcheckPath = "/health"
+healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
+# Minimum replicas to prevent scale-to-zero (requires paid plan)
+numReplicas = 1
