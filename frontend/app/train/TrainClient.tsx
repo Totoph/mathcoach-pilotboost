@@ -930,7 +930,7 @@ export default function TrainClient() {
 
   return (
     <>
-    <div className="h-[calc(100vh-6.5rem)] flex flex-col overflow-hidden">
+    <div className="h-[calc(100vh-5rem)] sm:h-[calc(100vh-6.5rem)] flex flex-col overflow-hidden">
       <PaywallPopup
         open={showPaywall}
         onClose={() => setShowPaywall(false)}
@@ -948,7 +948,8 @@ export default function TrainClient() {
         ref={inputRef}
         type="text"
         inputMode="none"
-        className="absolute opacity-0 w-0 h-0"
+        className="fixed opacity-0 w-0 h-0 caret-transparent focus:outline-none"
+        style={{ top: '-9999px', left: '-9999px' }}
         onKeyDown={handleKeyDown}
         autoFocus
         tabIndex={0}
@@ -956,7 +957,7 @@ export default function TrainClient() {
 
       <div className="flex-shrink-0 grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-2.5">
         <div className="col-span-2 bento-card p-2.5 flex items-center gap-2 overflow-hidden">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             {[{ key: "free", label: "Libre" }, { key: "tables", label: "Tables" }].map((m) => (
               <button
                 key={m.key}
@@ -970,9 +971,9 @@ export default function TrainClient() {
             ))}
           </div>
 
-          <div className="w-px h-6 bg-slate-200" />
+          <div className="w-px h-6 bg-slate-200 flex-shrink-0" />
 
-          <div ref={opDropdownRef}>
+          <div ref={opDropdownRef} className="flex-1 min-w-0">
             <button
               ref={opButtonRef}
               onClick={() => {
@@ -982,7 +983,7 @@ export default function TrainClient() {
                 }
                 setShowOpDropdown(!showOpDropdown);
               }}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200"
+              className="w-full flex items-center justify-between gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200"
             >
               {operationFilter.length === 0
                 ? "Tout"
@@ -1041,8 +1042,23 @@ export default function TrainClient() {
           </div>
         </div>
 
-        <div className="bento-card p-2.5 flex items-center justify-center gap-2">
-          <div className="flex gap-1">
+        <div className="bento-card p-2.5 flex items-center gap-2">
+          {/* Mobile: Coach IA button */}
+          <button
+            onClick={() => setCoachOpen(true)}
+            className="sm:hidden relative flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium bg-purple-100 text-purple-600 border border-purple-200 active:scale-95 transition-all flex-shrink-0"
+            aria-label="Ouvrir le Coach IA"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            {messages.length > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-orange-500 rounded-full text-[9px] font-bold flex items-center justify-center text-white">
+                {messages.length}
+              </span>
+            )}
+          </button>
+
+          {/* Desktop: progress dots */}
+          <div className="hidden sm:flex gap-1">
             {Array.from({ length: SERIES_SIZE }).map((_, i) => (
               <div
                 key={i}
@@ -1052,7 +1068,8 @@ export default function TrainClient() {
               />
             ))}
           </div>
-          <span className="text-xs font-bold text-slate-600">
+
+          <span className="text-xs font-bold text-slate-600 sm:ml-0">
             {seriesIndex}/{SERIES_SIZE}
           </span>
         </div>
@@ -1255,7 +1272,7 @@ export default function TrainClient() {
               )}
 
               {showHints && currentExercise.tip && (
-                <div className="absolute bottom-3 left-4 right-4">
+                <div className="mt-3 w-full max-w-xs sm:max-w-sm px-4">
                   <div className="bg-slate-50 border border-slate-100 rounded-xl p-2 text-center text-xs text-slate-500">💡 {currentExercise.tip}</div>
                 </div>
               )}
@@ -1264,20 +1281,6 @@ export default function TrainClient() {
         </div>
       </div>
     </div>
-
-      {/* FAB — Coach IA (mobile only) */}
-      <button
-        onClick={() => setCoachOpen(true)}
-        className="fixed bottom-6 right-6 z-50 lg:hidden w-14 h-14 bg-gradient-to-br from-purple-500 to-purple-700 text-white rounded-full shadow-xl flex items-center justify-center active:scale-95 transition-all"
-        aria-label="Ouvrir le Coach IA"
-      >
-        <Sparkles className="w-6 h-6" />
-        {messages.length > 0 && (
-          <span className="absolute -top-1 -right-1 w-5 h-5 bg-orange-500 rounded-full text-[10px] font-bold flex items-center justify-center">
-            {messages.length}
-          </span>
-        )}
-      </button>
 
       {/* Overlay */}
       {coachOpen && (
