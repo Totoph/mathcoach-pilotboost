@@ -928,6 +928,14 @@ export default function TrainClient() {
     );
   }
 
+  function getQuestionFontClass(q: string) {
+    const len = q.length;
+    if (len > 18) return "text-2xl lg:text-4xl";
+    if (len > 13) return "text-3xl lg:text-5xl";
+    if (len > 9)  return "text-4xl lg:text-6xl";
+    return "text-5xl lg:text-7xl";
+  }
+
   return (
     <>
     <div className="h-[calc(100vh-5rem)] sm:h-[calc(100vh-6.5rem)] flex flex-col overflow-hidden">
@@ -1043,13 +1051,14 @@ export default function TrainClient() {
         </div>
 
         <div className="bento-card p-2.5 flex items-center gap-2">
-          {/* Mobile: Coach IA button */}
+          {/* Mobile: Coach IA button (fills remaining space) */}
           <button
             onClick={() => setCoachOpen(true)}
-            className="sm:hidden relative flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium bg-purple-100 text-purple-600 border border-purple-200 active:scale-95 transition-all flex-shrink-0"
+            className="sm:hidden relative flex items-center justify-center gap-1.5 flex-1 py-2 rounded-lg text-xs font-medium bg-purple-100 text-purple-600 border border-purple-200 active:scale-95 transition-all"
             aria-label="Ouvrir le Coach IA"
           >
-            <Sparkles className="w-3.5 h-3.5" />
+            <Sparkles className="w-4 h-4" />
+            <span>Coach IA</span>
             {messages.length > 0 && (
               <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-orange-500 rounded-full text-[9px] font-bold flex items-center justify-center text-white">
                 {messages.length}
@@ -1069,18 +1078,15 @@ export default function TrainClient() {
             ))}
           </div>
 
-          <span className="text-xs font-bold text-slate-600 sm:ml-0">
+          <span className="text-xs font-bold text-slate-600 ml-auto sm:ml-0 flex-shrink-0">
             {seriesIndex}/{SERIES_SIZE}
           </span>
         </div>
 
-        <div className="bento-card p-2.5 flex items-center justify-end gap-2.5">
-          <div className="flex items-center gap-1.5">
-            <Clock className="w-4 h-4 text-slate-400" />
-            <span className="text-sm font-mono font-bold text-slate-600">
-              {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
-            </span>
-          </div>
+        <div className="bento-card p-2.5 flex items-center justify-center sm:justify-end gap-1.5 sm:gap-2.5">
+          <span className="text-sm font-mono font-bold text-slate-600">
+            {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
+          </span>
           <button
             onClick={() => setVoiceMode(!voiceMode)}
             title={voiceMode ? "Désactiver le mode vocal" : "Activer le mode vocal"}
@@ -1104,7 +1110,8 @@ export default function TrainClient() {
         </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-2.5 px-2.5 pb-2.5 min-h-0">
+      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-2.5 px-2.5 min-h-0">
         <div className="hidden lg:flex lg:col-span-1 bento-card flex-col min-h-0 overflow-hidden">
           {voiceMode ? (
             <VoiceTrainer
@@ -1213,7 +1220,7 @@ export default function TrainClient() {
         <div className="col-span-1 lg:col-span-3 bento-card flex flex-col items-center justify-center relative min-h-0 overflow-hidden" onClick={() => inputRef.current?.focus()}>
           {currentExercise && (
             <>
-              <div className="text-5xl lg:text-7xl font-extrabold text-slate-900 mb-5 text-center tracking-tight select-none">{currentExercise.question}</div>
+              <div className={`font-extrabold text-slate-900 mb-3 sm:mb-5 text-center tracking-tight select-none whitespace-nowrap ${getQuestionFontClass(currentExercise.question)}`}>{currentExercise.question}</div>
 
               {trainingMode === "speed" ? (
                 <div className="grid grid-cols-2 gap-3 w-full max-w-xs sm:max-w-sm px-4">
@@ -1271,15 +1278,20 @@ export default function TrainClient() {
                 </>
               )}
 
-              {showHints && currentExercise.tip && (
-                <div className="mt-3 w-full max-w-xs sm:max-w-sm px-4">
-                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-2 text-center text-xs text-slate-500">💡 {currentExercise.tip}</div>
-                </div>
-              )}
             </>
           )}
         </div>
       </div>
+
+      {/* Hint — below the training card, outside the bento box */}
+      {currentExercise && showHints && currentExercise.tip && (
+        <div className="flex-shrink-0 px-2.5 pb-2.5">
+          <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-2.5 text-center text-xs text-slate-500">
+            💡 {currentExercise.tip}
+          </div>
+        </div>
+      )}
+    </div>
     </div>
 
       {/* Overlay */}
