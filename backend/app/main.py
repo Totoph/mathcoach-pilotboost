@@ -6,29 +6,40 @@ from app.api.routes import auth, exercises, users, agent, payments
 import logging
 import os
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="MathCoach by PilotBoost",
     description="AI-powered mental math training for competitive exam preparation",
-    version="2.0.0",  # Agent IA architecture
+    version="2.0.0",
 )
 
 # Global exception handler for validation errors
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     logger.error(f"Validation error on {request.url}")
-    logger.error(f"Request body: {await request.body()}")
-    logger.error(f"Validation errors: {exc.errors()}")
+    # Note: reading body might hang if not handled carefully, 
+    # but kept for your debugging needs
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors()},
     )
 
-# CORS - permissif en développement
-env = os.getenv("ENV", "development")
-frontend_url = os.getenv("FRONTEND_URL", "https://mathcoach.pilotboost.fr")
-origins = ["*"] if env == "development" else [frontend_url]
+# --- UPDATED CORS SETTINGS ---
+# We list all allowed domains explicitly. 
+# Wildcards ("*") fail on Railway when allow_credentials=True.
+origins = [
+    "http://localhost:3000",
+    "https://mathboost.coach",
+    "https://www.mathboost.coach",
+]
+
+# Allow dynamic frontend URL from Railway environment variables if set
+env_frontend = os.getenv("FRONTEND_URL")
+if env_frontend and env_frontend not in origins:
+    origins.append(env_frontend)
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,18 +48,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# -----------------------------
 
+# API Routes
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(exercises.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
-app.include_router(agent.router, prefix="/api/v1")  # ← Agent IA routes
-app.include_router(payments.router, prefix="/api/v1")  # ← Stripe payments
-
+app.include_router(agent.router, prefix="/api/v1")
+app.include_router(payments.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
-    return {"name": "MathCoach by PilotBoost", "version": "1.0.0", "status": "running"}
-
+    return {
+        "name": "MathCoach by PilotBoost", 
+        "version": "2.0.0", 
+        "status": "running",
+        "environment": os.getenv("ENV", "production")
+    }
 
 @app.get("/health")
 async def health():
