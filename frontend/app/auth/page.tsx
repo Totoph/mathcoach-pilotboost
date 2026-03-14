@@ -27,7 +27,7 @@ export default function AuthPage() {
       } else {
         await signUp(email, password);
       }
-      router.push("/dashboard");
+      router.push("/train");
     } catch (err: any) {
       setError(
         mode === "login"

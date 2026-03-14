@@ -257,8 +257,10 @@ class UserCognitiveProfile:
 # ────────────────────────── Scoring Algorithm ──────────────────────────
 
 # EMA smoothing factor (lower = more smoothing, higher = more reactive)
-ACCURACY_ALPHA = 0.08
-SPEED_ALPHA = 0.1
+# Kept low to avoid large swings between sessions (a bad session shouldn't
+# wipe out progress from many good ones).
+ACCURACY_ALPHA = 0.05
+SPEED_ALPHA = 0.07
 
 # Difficulty mastery: need X consecutive correct at difficulty D
 MASTERY_STREAK_REQUIRED = 5
@@ -323,11 +325,11 @@ def update_skill_score(
     new_score = accuracy_score + speed_score + difficulty_score + consistency_score
     new_score = max(0.0, min(100.0, new_score))
 
-    # Smooth the score transition (avoid jumps)
+    # Smooth the score transition (avoid jumps between sessions)
     if skill.attempts <= 3:
         skill.score = new_score
     else:
-        skill.score = 0.15 * new_score + 0.85 * skill.score
+        skill.score = 0.08 * new_score + 0.92 * skill.score
 
     # Track history for plateau detection (keep last 30)
     skill.score_history.append(round(skill.score, 2))

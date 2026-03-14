@@ -144,16 +144,18 @@ def _gen_multiplication(difficulty: int, sub_skill: Optional[str] = None) -> Gen
         a, b = random.randint(2, 12), random.randint(2, 12)
         sub = "tables_basic"
     elif difficulty == 3:
-        a = random.randint(10, 30)
+        a = random.randint(10, 50)
         b = random.randint(2, 12)
         sub = "mult_2digit"
     elif difficulty == 4:
-        a = random.randint(10, 99)
-        b = random.randint(10, 99)
+        # 2-digit × small — manageable without pencil/paper
+        a = random.randint(11, 99)
+        b = random.randint(11, 30)
         sub = "mult_2digit"
     else:
-        a = random.randint(100, 999)
-        b = random.randint(10, 99)
+        # Large 2-digit × 2-digit — only reached via "advanced" filter or very high level
+        a = random.randint(21, 99)
+        b = random.randint(21, 99)
         sub = "mult_3digit"
 
     question = f"{a} × {b}"
@@ -408,43 +410,42 @@ def _gen_chain(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExe
         steps = random.randint(3, 5)
         sub = "chain_4plus"
 
-    # Build chain — retry until eval result is strictly positive (avoids user confusion
-    # with negative answers that require the ± toggle)
+    # Generate numbers and operators independently, then compute the answer
+    # with eval() so it always respects standard operator precedence (× before + and −).
+    # Retry until the result is a strictly positive integer.
     eval_result = 0
     question = ""
     for _attempt in range(60):
-        result = random.randint(2, 20)
-        parts = [str(result)]
+        start = random.randint(2, 20)
+        parts = [str(start)]
 
         for _ in range(steps):
             op = random.choice(["+", "−", "×"])
             if op == "×":
                 n = random.randint(2, 5)
-                result = result * n
             elif op == "+":
                 n = random.randint(1, 30)
-                result = result + n
             else:
-                n = random.randint(1, min(result - 1, 20)) if result > 1 else 1
-                result = result - n
+                n = random.randint(1, 20)
             parts.append(f"{op} {n}")
 
         question = " ".join(parts)
         try:
             eval_expr = question.replace("×", "*").replace("−", "-")
-            eval_result = int(eval(eval_expr))
+            raw = eval(eval_expr)
+            if raw != int(raw):
+                continue
+            eval_result = int(raw)
         except Exception:
             continue
-        if eval_result > 0:
-            break
+        break  # accept any integer result, positive or negative
 
     answer = str(eval_result)
 
-    # Choose the appropriate tip depending on whether the chain mixes priorities
     has_mult = "×" in question
     has_add_sub = ("+" in question or "−" in question)
     if has_mult and has_add_sub:
-        tip = "Respecte l'ordre des opérations : calcule les × en premier, puis + et −."
+        tip = "Priorité : × se calcule avant + et −. Commence par toutes les multiplications."
     else:
         tip = "Calcule étape par étape, de gauche à droite."
 
@@ -711,7 +712,7 @@ def generate_from_example(example: str, count: int = 10) -> list[GeneratedExerci
         has_mult_in_q = "×" in question
         has_add_sub_in_q = ("+" in question or "−" in question)
         if has_mult_in_q and has_add_sub_in_q:
-            tip = "Respecte l'ordre des opérations : calcule les × en premier, puis + et −."
+            tip = "Priorité : × se calcule avant + et −. Applique d'abord toutes les multiplications."
         else:
             tip = "Calcule étape par étape, de gauche à droite."
 

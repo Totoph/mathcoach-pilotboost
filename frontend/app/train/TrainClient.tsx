@@ -126,6 +126,10 @@ export default function TrainClient() {
   // Ref to avoid stale closure in auto-submit effect
   const exerciseRef = useRef<NextExercise | null>(null);
 
+  // Pre-fetch buffer: start loading the next exercise in the background as soon
+  // as the current one is displayed, so it's ready instantly when needed.
+  const prefetchRef = useRef<Promise<NextExercise> | null>(null);
+
   // Chat (only user-initiated)
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -225,10 +229,25 @@ export default function TrainClient() {
         if (customSeriesPool.length > 0 && customPoolIdx.current < customSeriesPool.length) {
           exercise = customSeriesPool[customPoolIdx.current];
           customPoolIdx.current++;
+          // Invalidate any stale pre-fetch when using custom pool
+          prefetchRef.current = null;
         } else {
           const mode = overrides?.mode ?? trainingMode;
           const ops = overrides?.operation ?? operationFilter;
-          exercise = await api.getNextExercise(mode || undefined, ops.length > 0 ? ops : undefined);
+
+          // Use pre-fetched exercise if available (same mode/ops, no override forcing refresh)
+          if (prefetchRef.current && !overrides) {
+            try {
+              exercise = await prefetchRef.current;
+            } catch {
+              exercise = await api.getNextExercise(mode || undefined, ops.length > 0 ? ops : undefined);
+            }
+          } else {
+            exercise = await api.getNextExercise(mode || undefined, ops.length > 0 ? ops : undefined);
+          }
+
+          // Immediately start pre-fetching the next exercise in background
+          prefetchRef.current = api.getNextExercise(mode || undefined, ops.length > 0 ? ops : undefined);
         }
 
         setCurrentExercise(exercise);
@@ -484,8 +503,10 @@ export default function TrainClient() {
       if (e.key === "Enter" || e.key === " ") handleStartNewSeries();
       return;
     }
-    if (e.key === "Backspace") setUserInput((prev) => prev.slice(0, -1));
-    else if (e.key === "-") setIsNegative((prev) => !prev);
+    if (e.key === "Backspace") {
+      if (userInput.length > 0) setUserInput((prev) => prev.slice(0, -1));
+      else setIsNegative(false);
+    } else if (e.key === "-") setIsNegative((prev) => !prev);
     else if (/^[0-9]$/.test(e.key)) setUserInput((prev) => prev + e.key);
   }
 
@@ -551,8 +572,10 @@ export default function TrainClient() {
   }
 
   function handleNumpadClick(value: string) {
-    if (value === "DEL") setUserInput((prev) => prev.slice(0, -1));
-    else if (value === "±") setIsNegative((prev) => !prev);
+    if (value === "DEL") {
+      if (userInput.length > 0) setUserInput((prev) => prev.slice(0, -1));
+      else setIsNegative(false);
+    } else if (value === "±") setIsNegative((prev) => !prev);
     else setUserInput((prev) => prev + value);
     inputRef.current?.focus();
   }
@@ -641,6 +664,11 @@ export default function TrainClient() {
 
   async function handleSendChat() {
     if (!chatInput.trim()) return;
+    // AI coach requires free mode — switch automatically if in tables mode
+    if (trainingMode === "tables") {
+      setTrainingMode("free");
+      api.setTrainingMode("free").catch(() => {});
+    }
     const msg = chatInput;
     setChatInput("");
     setMessages((prev) => [...prev, { role: "user", message: msg, timestamp: Date.now() }]);
@@ -708,6 +736,7 @@ export default function TrainClient() {
   }
 
   function handleModeChange(mode: string) {
+    prefetchRef.current = null; // invalidate stale pre-fetch
     setTrainingMode(mode);
     api.setTrainingMode(mode).catch(() => {});
     setSeriesResults([]);
@@ -717,6 +746,7 @@ export default function TrainClient() {
   }
 
   function handleOperationChange(op: string) {
+    prefetchRef.current = null; // invalidate stale pre-fetch
     let newFilter: string[];
     if (op === "all") newFilter = [];
     else {
@@ -1126,9 +1156,20 @@ export default function TrainClient() {
           ) : (
             <>
               <div className="flex-shrink-0 p-3 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-purple-500" />
-                  <h2 className="font-bold text-sm text-slate-900">Coach IA</h2>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-purple-500" />
+                    <h2 className="font-bold text-sm text-slate-900">Coach IA</h2>
+                  </div>
+                  {messages.length > 0 && (
+                    <button
+                      onClick={() => setMessages([])}
+                      title="Effacer la conversation"
+                      className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-all"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1320,12 +1361,23 @@ export default function TrainClient() {
             <Sparkles className="w-4 h-4 text-purple-500" />
             <h2 className="font-bold text-sm text-slate-900">Coach IA</h2>
           </div>
-          <button
-            onClick={() => setCoachOpen(false)}
-            className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
-          >
-            <X className="w-4 h-4 text-slate-500" />
-          </button>
+          <div className="flex items-center gap-1">
+            {messages.length > 0 && (
+              <button
+                onClick={() => setMessages([])}
+                title="Effacer la conversation"
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors text-xs font-medium"
+              >
+                Effacer
+              </button>
+            )}
+            <button
+              onClick={() => setCoachOpen(false)}
+              className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+            >
+              <X className="w-4 h-4 text-slate-500" />
+            </button>
+          </div>
         </div>
 
         {/* Messages */}

@@ -139,6 +139,12 @@ class AgentService:
             skill_name, sub_skill = select_next_skill(profile, profile.training_mode, operation_filter)
             skill_data = profile.skill_vector.get_skill(skill_name)
             difficulty = select_next_difficulty(skill_data)
+            # Cap multiplication difficulty at 4 (large 2-digit × 2-digit) unless the
+            # user explicitly chose the "advanced" operation filter or has an exceptional
+            # global level (>= 80). This keeps 782×89-style problems out of normal flow.
+            if skill_name == "multiplication" and difficulty >= 5:
+                if not (operation_filter and "advanced" in operation_filter) and profile.global_level < 80:
+                    difficulty = 4
 
         # Check for spaced repetition items due (skip if operation filter is active)
         sr_exercise = None
@@ -192,7 +198,10 @@ class AgentService:
 
             if result.data:
                 item = result.data[0]
-                from app.services.exercise_engine_v2 import GeneratedExercise
+                from app.services.exercise_engine_v2 import GeneratedExercise, get_technique_tips
+                # Use a real technique tip instead of the spaced repetition label
+                tips = get_technique_tips(item["skill"], 1)
+                tip = tips[0] if tips else None
                 return GeneratedExercise(
                     exercise_id=str(uuid4()),
                     skill=item["skill"],
@@ -201,7 +210,7 @@ class AgentService:
                     correct_answer=item["correct_answer"],
                     difficulty=item["difficulty"],
                     time_limit_ms=EXPECTED_TIME_MS.get(item["difficulty"], 15000),
-                    tip="Révision espacée — tu as déjà vu cet exercice !",
+                    tip=tip,
                 )
         except Exception as e:
             logger.warning(f"SR queue check failed: {e}")

@@ -184,6 +184,17 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ──── Row 4: Daily Score Evolution ──── */}
+      {d.history && d.history.length >= 2 && (
+        <div className="bento-card p-6">
+          <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-primary" />
+            Évolution du score journalier
+          </h3>
+          <ScoreChart history={d.history} />
+        </div>
+      )}
+
       {/* ──── Row 5: Weaknesses (only if data) ──── */}
       {d.weaknesses.length > 0 && (
         <div className="bento-card p-5">
@@ -256,5 +267,87 @@ function ModeCard({ title, desc, icon, color, onClick }: {
       <h4 className="font-bold text-white text-sm">{title}</h4>
       <p className="text-white/60 text-xs mt-1">{desc}</p>
     </button>
+  );
+}
+
+function ScoreChart({ history }: { history: { date: string; global_level: number }[] }) {
+  // Show last 30 entries max
+  const data = history.slice(-30);
+  if (data.length < 2) return null;
+
+  const W = 600;
+  const H = 120;
+  const PAD_L = 32;
+  const PAD_R = 12;
+  const PAD_T = 8;
+  const PAD_B = 24;
+
+  const minVal = Math.max(0, Math.min(...data.map((d) => d.global_level)) - 5);
+  const maxVal = Math.min(100, Math.max(...data.map((d) => d.global_level)) + 5);
+  const range = maxVal - minVal || 1;
+
+  const xStep = (W - PAD_L - PAD_R) / (data.length - 1);
+  const yFor = (v: number) => PAD_T + ((maxVal - v) / range) * (H - PAD_T - PAD_B);
+  const xFor = (i: number) => PAD_L + i * xStep;
+
+  const linePath = data
+    .map((d, i) => `${i === 0 ? "M" : "L"} ${xFor(i).toFixed(1)} ${yFor(d.global_level).toFixed(1)}`)
+    .join(" ");
+
+  // Area fill
+  const areaPath =
+    linePath +
+    ` L ${xFor(data.length - 1).toFixed(1)} ${(H - PAD_B).toFixed(1)} L ${PAD_L.toFixed(1)} ${(H - PAD_B).toFixed(1)} Z`;
+
+  // Pick a few evenly spaced labels on the x-axis
+  const labelIndices = [0, Math.floor(data.length / 2), data.length - 1];
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full"
+        style={{ minWidth: 260, height: 120 }}
+        preserveAspectRatio="none"
+      >
+        {/* Y-axis grid lines */}
+        {[0, 25, 50, 75, 100].filter((v) => v >= minVal && v <= maxVal).map((v) => (
+          <g key={v}>
+            <line
+              x1={PAD_L} y1={yFor(v)} x2={W - PAD_R} y2={yFor(v)}
+              stroke="#e2e8f0" strokeWidth="1"
+            />
+            <text x={PAD_L - 4} y={yFor(v) + 4} textAnchor="end" fontSize="9" fill="#94a3b8">
+              {v}
+            </text>
+          </g>
+        ))}
+
+        {/* Area fill */}
+        <path d={areaPath} fill="url(#scoreGrad)" opacity="0.25" />
+
+        {/* Line */}
+        <path d={linePath} fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* Dots */}
+        {data.map((d, i) => (
+          <circle key={i} cx={xFor(i)} cy={yFor(d.global_level)} r="3" fill="#3b82f6" />
+        ))}
+
+        {/* X-axis date labels */}
+        {labelIndices.map((i) => (
+          <text key={i} x={xFor(i)} y={H - 4} textAnchor="middle" fontSize="9" fill="#94a3b8">
+            {data[i].date.slice(5)}
+          </text>
+        ))}
+
+        <defs>
+          <linearGradient id="scoreGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#3b82f6" />
+            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
   );
 }
