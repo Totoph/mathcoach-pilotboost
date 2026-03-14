@@ -200,12 +200,39 @@ class AgentService:
                 # Use a real technique tip instead of the spaced repetition label
                 tips = get_technique_tips(item["skill"], 1)
                 tip = tips[0] if tips else None
+
+                # Recompute answer for chain/mixed exercises to fix stale entries
+                # that were stored with the old left-to-right evaluation algorithm.
+                correct_answer = item["correct_answer"]
+                if item["skill"] in ("chain", "mixed") and item.get("question"):
+                    try:
+                        eval_expr = (
+                            item["question"]
+                            .replace("×", "*")
+                            .replace("÷", "/")
+                            .replace("−", "-")
+                        )
+                        recomputed = int(eval(eval_expr))
+                        correct_answer = str(recomputed)
+                    except Exception:
+                        pass
+
+                # Lease lock: push next_review 1 hour forward so the background
+                # prefetch cannot return this same item before the user submits.
+                lease_time = (
+                    datetime.now(timezone.utc) + timedelta(hours=1)
+                ).isoformat()
+                self.supabase.table("spaced_repetition_queue")\
+                    .update({"next_review": lease_time})\
+                    .eq("id", item["id"])\
+                    .execute()
+
                 return GeneratedExercise(
                     exercise_id=str(uuid4()),
                     skill=item["skill"],
                     sub_skill=item.get("sub_skill", ""),
                     question=item["question"],
-                    correct_answer=item["correct_answer"],
+                    correct_answer=correct_answer,
                     difficulty=item["difficulty"],
                     time_limit_ms=EXPECTED_TIME_MS.get(item["difficulty"], 15000),
                     tip=tip,
