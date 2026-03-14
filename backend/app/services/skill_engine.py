@@ -591,15 +591,15 @@ def select_next_skill(
     """
     import random
 
+    # Table training mode takes priority over everything else
+    if training_mode == "tables":
+        return "tables_1_20", _pick_weakest_table(profile.skill_vector)
+
     # Operation filter: pick randomly from selected skills
     if operation_filter:
         valid = [op for op in operation_filter if op in SKILL_DEFINITIONS]
         if valid:
             return random.choice(valid), None
-
-    # Table training mode
-    if training_mode == "tables":
-        return "tables_1_20", _pick_weakest_table(profile.skill_vector)
 
     sv = profile.skill_vector
     roll = random.random()

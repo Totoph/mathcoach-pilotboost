@@ -125,14 +125,12 @@ class AgentService:
         if training_mode:
             profile.training_mode = training_mode
 
-        # ── Diagnostic mode: cycle through skills to assess broadly ──
+        # ── Diagnostic mode: pick random skills to assess broadly ──
         if not profile.diagnostic_completed and profile.total_exercises < 20 and not training_mode and not operation_filter:
             all_skills = list(SKILL_DEFINITIONS.keys())
-            # Cycle through skills: exercise 0→skill 0, 1→skill 1, etc. then repeat
-            skill_idx = profile.total_exercises % len(all_skills)
-            skill_name = all_skills[skill_idx]
+            # Pick randomly so the first exercise is never the same
+            skill_name = random.choice(all_skills)
             sub_skill = None
-            # Start at difficulty 2 to give a moderate challenge
             difficulty = 2
         else:
             # Select skill and difficulty

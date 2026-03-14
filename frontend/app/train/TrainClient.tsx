@@ -739,10 +739,12 @@ export default function TrainClient() {
     prefetchRef.current = null; // invalidate stale pre-fetch
     setTrainingMode(mode);
     api.setTrainingMode(mode).catch(() => {});
+    // Tables mode is exclusive — clear any operation filter that might override it
+    if (mode === "tables") setOperationFilter([]);
     setSeriesResults([]);
     setSeriesIndex(0);
     setShowPause(false);
-    loadNextExercise({ mode });
+    loadNextExercise({ mode, operation: [] });
   }
 
   function handleOperationChange(op: string) {
@@ -1316,6 +1318,15 @@ export default function TrainClient() {
                       </button>
                     ))}
                   </div>
+
+                  {/* Hint — desktop only: inside the card, below the numpad */}
+                  {showHints && currentExercise.tip && (
+                    <div className="hidden lg:block w-full max-w-xs sm:max-w-sm px-4 mt-3">
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-2.5 text-center text-xs text-slate-500">
+                        💡 {currentExercise.tip}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
 
@@ -1324,9 +1335,9 @@ export default function TrainClient() {
         </div>
       </div>
 
-      {/* Hint — below the training card, outside the bento box */}
+      {/* Hint — mobile only: below the training card */}
       {currentExercise && showHints && currentExercise.tip && (
-        <div className="flex-shrink-0 px-2.5 pb-2.5">
+        <div className="lg:hidden flex-shrink-0 px-2.5 pb-2.5">
           <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-2.5 text-center text-xs text-slate-500">
             💡 {currentExercise.tip}
           </div>
