@@ -212,11 +212,11 @@ export default function DashboardPage() {
       {/* ──── Row 6: Training Mode Selector ──── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <ModeCard title={t("dash_free_mode")} desc={t("dash_free_desc")} icon={<Brain className="w-6 h-6" />}
-          color="from-slate-900 to-slate-800" onClick={() => { api.setTrainingMode("free").catch(() => {}); router.push("/train?mode=free"); }} />
+          color="from-slate-900 to-slate-800" onClick={() => { api.setTrainingMode("adaptive").catch(() => {}); router.push("/train?mode=adaptive"); }} />
         <ModeCard title={t("dash_tables_mode")} desc={t("dash_tables_desc")} icon={<Target className="w-6 h-6" />}
           color="from-amber-500 to-orange-500" onClick={() => { api.setTrainingMode("tables").catch(() => {}); router.push("/train?mode=tables"); }} />
         <ModeCard title={t("dash_speed_mode")} desc={t("dash_speed_desc")} icon={<Timer className="w-6 h-6" />}
-          color="from-violet-600 to-purple-600" onClick={() => { api.setTrainingMode("speed").catch(() => {}); router.push("/train?mode=speed"); }} />
+          color="from-violet-600 to-purple-600" onClick={() => { api.setTrainingMode("multiple_choice").catch(() => {}); router.push("/train?mode=multiple_choice"); }} />
         <ModeCard title={t("dash_techniques_mode")} desc={t("dash_techniques_desc")} icon={<BookOpen className="w-6 h-6" />}
           color="from-emerald-600 to-teal-600" onClick={() => router.push("/techniques")} />
       </div>

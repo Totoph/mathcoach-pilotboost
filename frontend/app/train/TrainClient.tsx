@@ -46,14 +46,44 @@ interface SeriesResult {
 
 const SERIES_SIZE = 10;
 
-const OPERATION_OPTIONS = [
-  { key: "all", label: "Tout" },
+const EXCLUSIVE_MODES = [
+  { key: "adaptive", label: "Adaptatif" },
+  { key: "multiple_choice", label: "Choix multiple" },
+  { key: "tables", label: "Tables 1-20" },
+  { key: "advanced", label: "Avancé" },
+  { key: "chain_add_sub", label: "Chaîne +−" },
+  { key: "chain_add_sub_mul", label: "Chaîne +−×" },
+];
+
+const COMBINABLE_MODES = [
   { key: "addition", label: "Addition" },
   { key: "subtraction", label: "Soustraction" },
   { key: "multiplication", label: "Multiplication" },
   { key: "division", label: "Division" },
-  { key: "advanced", label: "Avancé" },
 ];
+
+const EXCLUSIVE_KEYS = new Set(EXCLUSIVE_MODES.map((m) => m.key));
+
+function modeToApiParams(modes: string[]): { apiMode: string; apiOps: string[] | undefined } {
+  if (modes.length === 0 || modes[0] === "adaptive" || modes[0] === "aicoach") {
+    return { apiMode: "free", apiOps: undefined };
+  }
+  if (modes.length === 1) {
+    switch (modes[0]) {
+      case "multiple_choice": return { apiMode: "speed", apiOps: undefined };
+      case "tables": return { apiMode: "tables", apiOps: undefined };
+      case "advanced": return { apiMode: "free", apiOps: ["advanced"] };
+      case "chain_add_sub": return { apiMode: "free", apiOps: ["chain"] };
+      case "chain_add_sub_mul": return { apiMode: "free", apiOps: ["mixed"] };
+      default: return { apiMode: "free", apiOps: [modes[0]] };
+    }
+  }
+  return { apiMode: "free", apiOps: modes };
+}
+
+function getModeLabel(key: string): string {
+  return [...EXCLUSIVE_MODES, ...COMBINABLE_MODES].find((m) => m.key === key)?.label ?? key;
+}
 
 export default function TrainClient() {
   const router = useRouter();
@@ -75,9 +105,8 @@ export default function TrainClient() {
   const [globalLevel, setGlobalLevel] = useState(0);
   const [now, setNow] = useState(Date.now());
 
-  // Training mode (from query or dashboard)
-  const [trainingMode, setTrainingMode] = useState<string | null>(null);
-  const [operationFilter, setOperationFilter] = useState<string[]>([]);
+  // Active modes (unified: replaces trainingMode + operationFilter)
+  const [activeModes, setActiveModes] = useState<string[]>(["adaptive"]);
   const [showOpDropdown, setShowOpDropdown] = useState(false);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const opDropdownRef = useRef<HTMLDivElement>(null);
@@ -143,7 +172,7 @@ export default function TrainClient() {
 
   useEffect(() => {
     const mode = searchParams.get("mode");
-    if (mode) setTrainingMode(mode);
+    setActiveModes(mode ? mode.split(",").filter(Boolean) : ["adaptive"]);
   }, [searchParams]);
 
   useEffect(() => {
@@ -177,7 +206,8 @@ export default function TrainClient() {
 
       // Read mode from URL immediately so loadNextExercise has it
       const urlMode = searchParams.get("mode");
-      if (urlMode) setTrainingMode(urlMode);
+      const urlModes = urlMode ? urlMode.split(",").filter(Boolean) : ["adaptive"];
+      setActiveModes(urlModes);
 
       try {
         const state = await api.getAgentState();
@@ -210,7 +240,7 @@ export default function TrainClient() {
         setUserWeaknesses(weakSkills.map((s) => ({ name: s.name, label: s.label, score: Math.round(s.score) })));
       } catch {}
 
-      await loadNextExercise({ mode: urlMode || undefined });
+      await loadNextExercise({ activeModes: urlModes });
       setLoading(false);
     }
     init();
@@ -223,31 +253,32 @@ export default function TrainClient() {
   }, [currentExercise, showPause, loading]);
 
   const loadNextExercise = useCallback(
-    async (overrides?: { mode?: string; operation?: string[] }) => {
+    async (overrides?: { activeModes?: string[] }) => {
       try {
         let exercise: NextExercise;
+        const effectiveModes = overrides?.activeModes ?? activeModes;
+
         if (customSeriesPool.length > 0 && customPoolIdx.current < customSeriesPool.length) {
           exercise = customSeriesPool[customPoolIdx.current];
           customPoolIdx.current++;
           // Invalidate any stale pre-fetch when using custom pool
           prefetchRef.current = null;
         } else {
-          const mode = overrides?.mode ?? trainingMode;
-          const ops = overrides?.operation ?? operationFilter;
+          const { apiMode, apiOps } = modeToApiParams(effectiveModes);
 
-          // Use pre-fetched exercise if available (same mode/ops, no override forcing refresh)
+          // Use pre-fetched exercise if available (no override forcing refresh)
           if (prefetchRef.current && !overrides) {
             try {
               exercise = await prefetchRef.current;
             } catch {
-              exercise = await api.getNextExercise(mode || undefined, ops.length > 0 ? ops : undefined);
+              exercise = await api.getNextExercise(apiMode, apiOps);
             }
           } else {
-            exercise = await api.getNextExercise(mode || undefined, ops.length > 0 ? ops : undefined);
+            exercise = await api.getNextExercise(apiMode, apiOps);
           }
 
           // Immediately start pre-fetching the next exercise in background
-          prefetchRef.current = api.getNextExercise(mode || undefined, ops.length > 0 ? ops : undefined);
+          prefetchRef.current = api.getNextExercise(apiMode, apiOps);
         }
 
         setCurrentExercise(exercise);
@@ -258,8 +289,7 @@ export default function TrainClient() {
         setAnswerState("idle");
         setSpeedPicked(null);
 
-        const effectiveMode = overrides?.mode ?? trainingMode;
-        if (effectiveMode === "speed" && exercise.correct_answer) {
+        if (effectiveModes.includes("multiple_choice") && exercise.correct_answer) {
           const correct = parseInt(exercise.correct_answer, 10);
           const wrongSet = new Set<number>();
           while (wrongSet.size < 3) {
@@ -282,7 +312,7 @@ export default function TrainClient() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [trainingMode, operationFilter, customSeriesPool]
+    [activeModes, customSeriesPool]
   );
 
   useEffect(() => {
@@ -290,7 +320,7 @@ export default function TrainClient() {
   }, [currentExercise]);
 
   useEffect(() => {
-    if (trainingMode === "speed") return;
+    if (activeModes.includes("multiple_choice")) return;
     if (!userInput.trim() || isSubmitting || showPause || answerState === "correct") return;
     const exercise = exerciseRef.current;
     if (exercise?.correct_answer) {
@@ -664,10 +694,13 @@ export default function TrainClient() {
 
   async function handleSendChat() {
     if (!chatInput.trim()) return;
-    // AI coach requires free mode — switch automatically if in tables mode
-    if (trainingMode === "tables") {
-      setTrainingMode("free");
-      api.setTrainingMode("free").catch(() => {});
+    // Switch to AI Coach mode automatically
+    if (!activeModes.includes("aicoach")) {
+      setActiveModes(["aicoach"]);
+      const url = new URL(window.location.href);
+      url.searchParams.set("mode", "aicoach");
+      window.history.replaceState({}, "", url.toString());
+      api.setTrainingMode("aicoach").catch(() => {});
     }
     const msg = chatInput;
     setChatInput("");
@@ -735,34 +768,35 @@ export default function TrainClient() {
     }
   }
 
-  function handleModeChange(mode: string) {
-    prefetchRef.current = null; // invalidate stale pre-fetch
-    setTrainingMode(mode);
-    api.setTrainingMode(mode).catch(() => {});
-    // Tables mode is exclusive — clear any operation filter that might override it
-    if (mode === "tables") setOperationFilter([]);
-    setSeriesResults([]);
-    setSeriesIndex(0);
-    setShowPause(false);
-    loadNextExercise({ mode, operation: [] });
-  }
+  function handleModeSelect(key: string) {
+    prefetchRef.current = null;
+    let newModes: string[];
 
-  function handleOperationChange(op: string) {
-    prefetchRef.current = null; // invalidate stale pre-fetch
-    let newFilter: string[];
-    if (op === "all") newFilter = [];
-    else {
-      const current = [...operationFilter];
-      const idx = current.indexOf(op);
-      if (idx >= 0) current.splice(idx, 1);
-      else current.push(op);
-      newFilter = current;
+    if (EXCLUSIVE_KEYS.has(key)) {
+      // Exclusive: just this one
+      newModes = [key];
+    } else {
+      // Combinable: toggle it, clear all exclusives
+      const current = activeModes.filter((m) => !EXCLUSIVE_KEYS.has(m) && m !== "aicoach");
+      const idx = current.indexOf(key);
+      if (idx >= 0) {
+        const next = current.filter((m) => m !== key);
+        newModes = next.length > 0 ? next : ["adaptive"];
+      } else {
+        newModes = [...current, key];
+      }
     }
-    setOperationFilter(newFilter);
+
+    setActiveModes(newModes);
+    const modeStr = newModes.join(",");
+    const url = new URL(window.location.href);
+    url.searchParams.set("mode", modeStr);
+    window.history.replaceState({}, "", url.toString());
+    api.setTrainingMode(modeStr).catch(() => {});
     setSeriesResults([]);
     setSeriesIndex(0);
     setShowPause(false);
-    loadNextExercise({ operation: newFilter });
+    loadNextExercise({ activeModes: newModes });
   }
 
   if (loading) {
@@ -997,22 +1031,6 @@ export default function TrainClient() {
 
       <div className="flex-shrink-0 grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-2.5">
         <div className="col-span-2 bento-card p-2.5 flex items-center gap-2 overflow-hidden">
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {[{ key: "free", label: "Libre" }, { key: "tables", label: "Tables" }].map((m) => (
-              <button
-                key={m.key}
-                onClick={() => handleModeChange(m.key)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  (trainingMode || "free") === m.key ? "bg-slate-900 text-white" : "text-slate-400 hover:text-slate-700 hover:bg-slate-50"
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="w-px h-6 bg-slate-200 flex-shrink-0" />
-
           <div ref={opDropdownRef} className="flex-1 min-w-0">
             <button
               ref={opButtonRef}
@@ -1025,54 +1043,69 @@ export default function TrainClient() {
               }}
               className="w-full flex items-center justify-between gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200"
             >
-              {operationFilter.length === 0
-                ? "Tout"
-                : operationFilter.length === 1
-                  ? OPERATION_OPTIONS.find((o) => o.key === operationFilter[0])?.label
-                  : `${operationFilter.length} types`}
-              <ChevronDown className={`w-4 h-4 transition-transform ${showOpDropdown ? "rotate-180" : ""}`} />
+              {/* Mobile: count if multiple, label if single */}
+              <span className="sm:hidden truncate">
+                {activeModes.length === 1 ? getModeLabel(activeModes[0]) : `${activeModes.length} modes`}
+              </span>
+              {/* Desktop: list all labels */}
+              <span className="hidden sm:block truncate">
+                {activeModes.map(getModeLabel).join(", ")}
+              </span>
+              <ChevronDown className={`w-4 h-4 transition-transform flex-shrink-0 ${showOpDropdown ? "rotate-180" : ""}`} />
             </button>
             {showOpDropdown &&
               createPortal(
                 <div
                   ref={opMenuRef}
-                  className="w-48 bg-white rounded-xl border border-slate-200 shadow-2xl py-1 overflow-hidden"
+                  className="w-56 bg-white rounded-xl border border-slate-200 shadow-2xl py-1 overflow-hidden"
                   style={{ position: "fixed", top: dropdownPos.top, left: dropdownPos.left, zIndex: 99999 }}
                 >
-                  <button
-                    onClick={() => handleOperationChange("all")}
-                    className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 transition-all ${
-                      operationFilter.length === 0 ? "bg-slate-900 text-white font-medium" : "text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    <div
-                      className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                        operationFilter.length === 0 ? "bg-white border-white" : "border-slate-300"
-                      }`}
-                    >
-                      {operationFilter.length === 0 && <Check className="w-3 h-3 text-slate-900" />}
-                    </div>
-                    Tout
-                  </button>
-                  <div className="h-px bg-slate-100 mx-2" />
-                  {OPERATION_OPTIONS.filter((o) => o.key !== "all").map((op) => {
-                    const isSelected = operationFilter.includes(op.key);
+                  {/* ── Exclusive modes section ── */}
+                  <div className="px-3 pt-2 pb-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Mode unique
+                  </div>
+                  {EXCLUSIVE_MODES.map((m) => {
+                    const isSelected = activeModes.length === 1 && activeModes[0] === m.key;
                     return (
                       <button
-                        key={op.key}
-                        onClick={() => handleOperationChange(op.key)}
+                        key={m.key}
+                        onClick={() => { handleModeSelect(m.key); setShowOpDropdown(false); }}
+                        className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 transition-all ${
+                          isSelected ? "bg-slate-900 text-white font-medium" : "text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                          isSelected ? "border-white" : "border-slate-300"
+                        }`}>
+                          {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                        </div>
+                        {m.label}
+                      </button>
+                    );
+                  })}
+
+                  <div className="h-px bg-slate-100 mx-2 my-1" />
+
+                  {/* ── Combinable modes section ── */}
+                  <div className="px-3 pt-1 pb-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Combinable
+                  </div>
+                  {COMBINABLE_MODES.map((m) => {
+                    const isSelected = activeModes.includes(m.key);
+                    return (
+                      <button
+                        key={m.key}
+                        onClick={() => handleModeSelect(m.key)}
                         className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 transition-all ${
                           isSelected ? "bg-slate-100 text-slate-900 font-medium" : "text-slate-600 hover:bg-slate-50"
                         }`}
                       >
-                        <div
-                          className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                            isSelected ? "bg-slate-900 border-slate-900" : "border-slate-300"
-                          }`}
-                        >
+                        <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                          isSelected ? "bg-slate-900 border-slate-900" : "border-slate-300"
+                        }`}>
                           {isSelected && <Check className="w-3 h-3 text-white" />}
                         </div>
-                        {op.label}
+                        {m.label}
                       </button>
                     );
                   })}
@@ -1265,7 +1298,7 @@ export default function TrainClient() {
             <>
               <div className={`font-extrabold text-slate-900 mb-3 sm:mb-5 text-center tracking-tight select-none whitespace-nowrap ${getQuestionFontClass(currentExercise.question)}`}>{currentExercise.question}</div>
 
-              {trainingMode === "speed" ? (
+              {activeModes.includes("multiple_choice") ? (
                 <div className="grid grid-cols-2 gap-3 w-full max-w-xs sm:max-w-sm px-4">
                   {speedChoices.map((choice) => {
                     const isCorrectChoice = choice === currentExercise.correct_answer;
