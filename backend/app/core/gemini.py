@@ -128,7 +128,7 @@ async def parse_exercise_intent(user_message: str) -> dict:
     Returns a JSON dict with:
       - is_exercise_request: bool
       - skill: str | null (one of: addition, subtraction, multiplication, division,
-        tables_1_20, squares_1_30, decomposition, fast_multiplication,
+        tables_1_20, squares_1_30, fast_multiplication,
         mixed, chain, advanced)
       - difficulty: int | null (1-5)
       - example: str | null (if user gave a concrete example expression)
@@ -147,7 +147,6 @@ COMPÉTENCES DISPONIBLES (utilise exactement ces noms) :
 - division : divisions
 - tables_1_20 : tables de multiplication (1 à 20)
 - squares_1_30 : carrés de nombres
-- decomposition : décompositions
 - fast_multiplication : multiplications rapides (×5, ×9, ×11, ×25, ×99)
 - mixed : opérations mixtes (2 opérations différentes)
 - chain : chaînes de calcul (plusieurs opérations)

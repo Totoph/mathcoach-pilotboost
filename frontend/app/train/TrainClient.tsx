@@ -637,7 +637,6 @@ export default function TrainClient() {
     if (/chaine|enchaine|chain/.test(m)) return { skill: "chain", difficulty: 2, description: "Chaînes de calcul" };
     if (/mixte|melange|mix/.test(m)) return { skill: "mixed", difficulty: 2, description: "Opérations mixtes" };
     if (/avance|vedique|croise/.test(m)) return { skill: "advanced", difficulty: 3, description: "Techniques avancées" };
-    if (/decompos|factori/.test(m)) return { skill: "decomposition", difficulty: 2, description: "Décompositions" };
     if (/rapide|\*5|\*9|\*11|\*25|\*99|fois 5|fois 9|fois 11/.test(m)) return { skill: "fast_multiplication", difficulty: 2, description: "Mult. rapides" };
     return null;
   }
@@ -832,7 +831,6 @@ export default function TrainClient() {
       advanced: "Avancé",
       tables_1_20: "Tables",
       squares_1_30: "Carrés",
-      decomposition: "Décompositions",
       fast_multiplication: "Mult. rapides",
       mixed: "Mixte",
       chain: "Chaînes",

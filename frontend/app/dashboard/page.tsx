@@ -19,7 +19,6 @@ const SKILL_COLORS: Record<string, string> = {
   division: "bg-indigo-500",
   tables_1_20: "bg-amber-500",
   squares: "bg-rose-500",
-  decomposition: "bg-emerald-500",
   fast_multiplication: "bg-orange-500",
   mixed: "bg-pink-500",
   chain: "bg-lime-600",

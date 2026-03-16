@@ -144,9 +144,9 @@ class AgentService:
                 if not (operation_filter and "advanced" in operation_filter) and profile.global_level < 80:
                     difficulty = 4
 
-        # Check for spaced repetition items due (skip if operation filter is active)
+        # Check for spaced repetition items due (skip if operation filter or specific mode is active)
         sr_exercise = None
-        if not operation_filter:
+        if not operation_filter and training_mode not in ("tables",):
             sr_exercise = await self._check_spaced_repetition(
                 UUID(str(instance.user_id)), skill_name
             )

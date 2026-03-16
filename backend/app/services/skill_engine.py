@@ -80,15 +80,6 @@ SKILL_DEFINITIONS = {
             "squares_21_30",
         ],
     },
-    "decomposition": {
-        "label": "Décompositions",
-        "weight": 0.05,
-        "order": 7,
-        "sub_skills": [
-            "factor_simple",
-            "factor_complex",
-        ],
-    },
     "fast_multiplication": {
         "label": "Multiplications rapides",
         "weight": 0.06,
@@ -180,7 +171,6 @@ class SkillVector:
     division: SkillData = field(default_factory=SkillData)
     tables_1_20: SkillData = field(default_factory=SkillData)
     squares_1_30: SkillData = field(default_factory=SkillData)
-    decomposition: SkillData = field(default_factory=SkillData)
     fast_multiplication: SkillData = field(default_factory=SkillData)
     mixed: SkillData = field(default_factory=SkillData)
     chain: SkillData = field(default_factory=SkillData)

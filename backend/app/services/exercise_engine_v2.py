@@ -266,34 +266,6 @@ def _gen_squares(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedE
     )
 
 
-def _gen_decomposition(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExercise:
-    """Number decomposition exercises."""
-    if difficulty <= 2:
-        # Simple: break into tens and units
-        n = random.randint(20, 99)
-        tens = (n // 10) * 10
-        units = n % 10
-        mult_a = random.randint(2, 9)
-        question = f"{mult_a} × {n}"
-        answer = str(mult_a * n)
-        tip = f"Décompose: {mult_a} × {n} = {mult_a} × {tens} + {mult_a} × {units} = {mult_a * tens} + {mult_a * units}"
-        sub = "factor_simple"
-    else:
-        # Complex: find factors or use distribution
-        a = random.randint(10, 50)
-        b = random.randint(10, 50)
-        question = f"{a} × {b}"
-        answer = str(a * b)
-        # Find a good decomposition
-        tip = _get_decomposition_tip(a, b)
-        sub = "factor_complex"
-
-    return GeneratedExercise(
-        exercise_id=str(uuid4()), skill="decomposition", sub_skill=sub_skill or sub,
-        question=question, correct_answer=answer, difficulty=difficulty,
-        time_limit_ms=TIME_LIMITS[difficulty] + 5000, tip=tip,
-    )
-
 
 def _gen_fast_multiplication(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExercise:
     """Fast multiplication tricks (×5, ×9, ×11, ×25, ×50, ×99)."""
@@ -520,7 +492,6 @@ GENERATORS = {
     "division": _gen_division,
     "tables_1_20": _gen_tables_1_20,
     "squares_1_30": _gen_squares,
-    "decomposition": _gen_decomposition,
     "fast_multiplication": _gen_fast_multiplication,
     "mixed": _gen_mixed,
     "chain": _gen_chain,
@@ -852,17 +823,6 @@ def _get_x11_tip(n: int) -> str:
     return f"×11: {n} × 10 + {n} = {n * 10} + {n} = {n * 11}"
 
 
-def _get_decomposition_tip(a: int, b: int) -> str:
-    # Try to find a nice decomposition
-    if b % 10 == 0:
-        return f"{a} × {b} = {a} × {b // 10} × 10"
-    if a % 10 == 0:
-        return f"{a} × {b} = {a // 10} × {b} × 10"
-    
-    b_tens = (b // 10) * 10
-    b_units = b % 10
-    return f"Décompose: {a} × {b} = {a} × {b_tens} + {a} × {b_units} = {a * b_tens} + {a * b_units} = {a * b}"
-
 
 def _eval_binary(a: int, op: str, b: int) -> int:
     """Evaluate a binary operation."""
@@ -916,11 +876,6 @@ TECHNIQUE_TIPS = {
         "🔢 Nombres en 5 : 25² = 2×3 centaines + 25 = 625",
         "🎯 Utilise le carré voisin : 21² = 20² + 20 + 21 = 400 + 41 = 441",
         "⚡ Mémorise les carrés jusqu'à 20, c'est une base essentielle",
-    ],
-    "decomposition": [
-        "✂️ Trouve les facteurs pratiques : 36 = 4×9 = 6×6",
-        "🔟 Cherche les multiples de 10, 5, 2",
-        "📐 Distribution : a×(b+c) = a×b + a×c",
     ],
     "fast_multiplication": [
         "⚡ ×5 : ÷2 puis ×10 (ou ×10 puis ÷2)",
