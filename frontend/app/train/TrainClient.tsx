@@ -25,6 +25,7 @@ import { getUser } from "@/lib/supabase";
 import { api, NextExercise } from "@/lib/api";
 import VoiceTrainer from "@/components/VoiceTrainer";
 import PaywallPopup from "@/components/PaywallPopup";
+import CoachSuggestionModal from "@/components/CoachSuggestionModal";
 import { useTranslation } from "@/lib/i18n";
 
 interface Message {
@@ -82,8 +83,22 @@ function modeToApiParams(modes: string[]): { apiMode: string; apiOps: string[] |
 }
 
 function getModeLabel(key: string): string {
+  if (key === "aicoach") return "Adaptatif";
   return [...EXCLUSIVE_MODES, ...COMBINABLE_MODES].find((m) => m.key === key)?.label ?? key;
 }
+
+const SKILL_LABELS: Record<string, string> = {
+  addition: "Addition",
+  subtraction: "Soustraction",
+  multiplication: "Multiplication",
+  division: "Division",
+  advanced: "Avancé",
+  tables_1_20: "Tables",
+  squares_1_30: "Carrés",
+  fast_multiplication: "Mult. rapides",
+  mixed: "Mixte",
+  chain: "Chaînes",
+};
 
 export default function TrainClient() {
   const router = useRouter();
@@ -149,6 +164,15 @@ export default function TrainClient() {
   const [isPremium, setIsPremium] = useState(false);
   const FREE_LIMIT = 100;
 
+  // Coach mastery suggestion popup
+  const [showCoachSuggestion, setShowCoachSuggestion] = useState(false);
+  const [coachSuggestionData, setCoachSuggestionData] = useState<{
+    masteredSkillLabel: string;
+    masteredSkillScore: number;
+    weakness: { name: string; label: string; score: number };
+  } | null>(null);
+  const coachSuggestionShownRef = useRef(false);
+
   // i18n (kept for compatibility; may be used by child components)
   useTranslation();
 
@@ -195,6 +219,45 @@ export default function TrainClient() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Coach mastery suggestion: detect when a skill is well-mastered and weaknesses exist
+  useEffect(() => {
+    if (!showPause) {
+      coachSuggestionShownRef.current = false;
+      return;
+    }
+    if (coachSuggestionShownRef.current) return;
+
+    const MASTERY_THRESHOLD = 75;
+
+    // Find the dominant skill in this series (must cover ≥70% of exercises)
+    const skillCounts: Record<string, number> = {};
+    seriesResults.forEach((r) => {
+      if (r.skill_name) skillCounts[r.skill_name] = (skillCounts[r.skill_name] || 0) + 1;
+    });
+    const sorted = Object.entries(skillCounts).sort((a, b) => b[1] - a[1]);
+    const dominantSkill = sorted[0]?.[0];
+    if (!dominantSkill) return;
+    if ((skillCounts[dominantSkill] || 0) < seriesResults.length * 0.7) return;
+
+    // Check mastery threshold
+    const skillScore = skillScoresAfter[dominantSkill];
+    if (!skillScore || skillScore < MASTERY_THRESHOLD) return;
+
+    // Find a weakness to suggest (different skill, score < 60)
+    const weaknessToSuggest = userWeaknesses.find(
+      (w) => w.name !== dominantSkill && w.score < 60
+    );
+    if (!weaknessToSuggest) return;
+
+    coachSuggestionShownRef.current = true;
+    setCoachSuggestionData({
+      masteredSkillLabel: SKILL_LABELS[dominantSkill] || dominantSkill,
+      masteredSkillScore: Math.round(skillScore),
+      weakness: weaknessToSuggest,
+    });
+    setShowCoachSuggestion(true);
+  }, [showPause, seriesResults, skillScoresAfter, userWeaknesses]);
 
   useEffect(() => {
     async function init() {
@@ -487,6 +550,8 @@ export default function TrainClient() {
   async function handleStartNewSeries() {
     if (seriesLoading) return;
     setSeriesLoading(true);
+    setShowCoachSuggestion(false);
+    coachSuggestionShownRef.current = false;
     setCustomSeriesPool([]);
     setCustomSeriesExample(null);
     customPoolIdx.current = 0;
@@ -653,6 +718,8 @@ export default function TrainClient() {
     setSeriesResults([]);
     setSeriesIndex(0);
     setShowPause(false);
+    setShowCoachSuggestion(false);
+    coachSuggestionShownRef.current = false;
     setSeriesStartTime(Date.now());
     setSkillScoresAfter({});
     const first = exercises[0];
@@ -693,14 +760,6 @@ export default function TrainClient() {
 
   async function handleSendChat() {
     if (!chatInput.trim()) return;
-    // Switch to AI Coach mode automatically
-    if (!activeModes.includes("aicoach")) {
-      setActiveModes(["aicoach"]);
-      const url = new URL(window.location.href);
-      url.searchParams.set("mode", "aicoach");
-      window.history.replaceState({}, "", url.toString());
-      api.setTrainingMode("aicoach").catch(() => {});
-    }
     const msg = chatInput;
     setChatInput("");
     setMessages((prev) => [...prev, { role: "user", message: msg, timestamp: Date.now() }]);
@@ -795,7 +854,28 @@ export default function TrainClient() {
     setSeriesResults([]);
     setSeriesIndex(0);
     setShowPause(false);
+    setShowCoachSuggestion(false);
+    coachSuggestionShownRef.current = false;
     loadNextExercise({ activeModes: newModes });
+  }
+
+  async function handleSwitchToWeakness() {
+    setShowCoachSuggestion(false);
+    if (!coachSuggestionData) return;
+    const { weakness } = coachSuggestionData;
+    setSeriesLoading(true);
+    setShowPause(false);
+    try {
+      const difficulty = Math.max(1, Math.min(3, Math.round(weakness.score / 20)));
+      const res = await api.generateSkillSeries(weakness.name, difficulty, SERIES_SIZE);
+      if (res.exercises.length > 0) {
+        launchCustomSeries(res.exercises, weakness.label);
+      }
+    } catch {
+      await loadNextExercise();
+    } finally {
+      setSeriesLoading(false);
+    }
   }
 
   if (loading) {
@@ -823,18 +903,6 @@ export default function TrainClient() {
       .filter((t): t is string => !!t)
       .filter((t, i, a) => a.indexOf(t) === i);
 
-    const SKILL_LABELS: Record<string, string> = {
-      addition: "Addition",
-      subtraction: "Soustraction",
-      multiplication: "Multiplication",
-      division: "Division",
-      advanced: "Avancé",
-      tables_1_20: "Tables",
-      squares_1_30: "Carrés",
-      fast_multiplication: "Mult. rapides",
-      mixed: "Mixte",
-      chain: "Chaînes",
-    };
     const skillsInSeries = Array.from(new Set(seriesResults.map((r) => r.skill_name || "other")));
 
     return (
@@ -1015,6 +1083,17 @@ export default function TrainClient() {
           }
         }}
       />
+
+      {coachSuggestionData && (
+        <CoachSuggestionModal
+          isOpen={showCoachSuggestion}
+          masteredSkillLabel={coachSuggestionData.masteredSkillLabel}
+          masteredSkillScore={coachSuggestionData.masteredSkillScore}
+          weakness={coachSuggestionData.weakness}
+          onContinue={() => setShowCoachSuggestion(false)}
+          onSwitchToWeakness={handleSwitchToWeakness}
+        />
+      )}
 
       <input
         ref={inputRef}

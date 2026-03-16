@@ -9,6 +9,7 @@ Full adaptive agent with:
 - Smart exercise selection
 - Personalized tips & feedback via Gemini
 """
+import asyncio
 import random
 import logging
 from uuid import UUID, uuid4
@@ -259,12 +260,11 @@ class AgentService:
         # Get cached exercise (in-memory first, then fall back to DB)
         cached = _exercise_cache.get(str(exercise_id))
         if not cached:
-            # Try to recover from DB state
             state_data = instance.state.model_dump()
             pending = state_data.get("pending_exercise")
             if pending and pending.get("exercise_id") == str(exercise_id):
                 cached = pending
-                _exercise_cache[str(exercise_id)] = cached  # re-populate cache
+                _exercise_cache[str(exercise_id)] = cached
         if not cached:
             raise ValueError(f"Exercise {exercise_id} not found (expired or invalid)")
 
@@ -275,64 +275,69 @@ class AgentService:
         difficulty = cached["difficulty"]
         tip_shown = cached.get("tip")
 
-        # Check answer
+        # ── All computation in memory (no I/O) ──────────────────────────
         is_correct = self._check_answer(user_answer, correct_answer, skill_name)
 
-        # Classify error if incorrect
         error_type = None
         if not is_correct:
             error_type = classify_error(
                 correct_answer, user_answer, skill_name, sub_skill,
                 time_taken_ms, difficulty
             )
-            # Track error
             profile.error_counts[error_type] = profile.error_counts.get(error_type, 0) + 1
-            # Store error pattern
-            await self._store_error_pattern(
-                user_id, skill_name, error_type, question,
-                correct_answer, user_answer, time_taken_ms
-            )
 
-        # Update skill score
         skill_data = profile.skill_vector.get_skill(skill_name)
         skill_data = update_skill_score(
             skill_data, is_correct, time_taken_ms, difficulty, skill_name
         )
         profile.skill_vector.set_skill(skill_name, skill_data)
 
-        # Update global stats
         profile.total_exercises += 1
         if is_correct:
             profile.total_correct += 1
             _exercise_cache.pop(str(exercise_id), None)
 
-        # Compute new global level
         profile.global_level = compute_global_level(profile.skill_vector)
         profile.last_difficulty = difficulty
 
-        # Update strengths/weaknesses
         strengths, weaknesses = identify_strengths_weaknesses(profile.skill_vector)
         profile.strengths = strengths
         profile.weaknesses = weaknesses
         profile.focus_areas = select_focus_areas(profile.skill_vector, weaknesses)
 
-        # Check diagnostic completion (20 questions)
         if not profile.diagnostic_completed and profile.total_exercises >= 20:
             profile.diagnostic_completed = True
 
-        # Update spaced repetition
-        await self._update_spaced_repetition(
-            user_id, skill_name, sub_skill, question,
-            correct_answer, difficulty, is_correct, time_taken_ms
-        )
-
-        # Check for plateau
         plateau_message = None
         if detect_plateau(skill_data.score_history):
             remedy = get_plateau_remedy(skill_name, skill_data)
             plateau_message = remedy["message"]
 
-        # Save performance to DB
+        # ── Build response immediately (pure memory) ─────────────────────
+        technique_tip = None
+        if not is_correct:
+            tips = get_technique_tips(skill_name, 1)
+            technique_tip = tips[0] if tips else None
+
+        agent_feedback = self._get_feedback(
+            is_correct, skill_name, difficulty, error_type, plateau_message
+        )
+        points_earned = self._calculate_points(is_correct, difficulty, time_taken_ms)
+
+        response = SubmitAnswerResponse(
+            is_correct=is_correct,
+            correct_answer=correct_answer,
+            agent_feedback=agent_feedback,
+            points_earned=points_earned,
+            error_type=error_type,
+            technique_tip=technique_tip,
+            state_updated=True,
+            skill_name=skill_name,
+            skill_score=round(skill_data.score, 1),
+            global_level=round(profile.global_level, 1),
+        )
+
+        # ── Fire all DB writes in background (non-blocking) ──────────────
         perf_data = {
             "agent_instance_id": str(instance.id),
             "exercise_type": skill_name,
@@ -346,45 +351,81 @@ class AgentService:
             "tip_shown": tip_shown,
             "error_type": error_type,
         }
-        self.supabase.table("exercise_performances").insert(perf_data).execute()
-
-        # Save updated profile to agent_instances
-        state_dict = self._save_profile(profile)
-        updates = {
-            "state": state_dict,
-            "current_level": max(1, int(profile.global_level / 20)),  # Map 0-100 to 0-5
-        }
-        if profile.diagnostic_completed and not instance.diagnostic_completed:
-            updates["diagnostic_completed"] = True
-        self.supabase.table("agent_instances")\
-            .update(updates).eq("id", str(instance.id)).execute()
-
-        # Save daily snapshot
-        await self._save_daily_snapshot(user_id, profile)
-
-        # Generate feedback
-        technique_tip = None
-        if not is_correct:
-            tips = get_technique_tips(skill_name, 1)
-            technique_tip = tips[0] if tips else None
-
-        agent_feedback = self._get_feedback(
-            is_correct, skill_name, difficulty, error_type, plateau_message
-        )
-        points_earned = self._calculate_points(is_correct, difficulty, time_taken_ms)
-
-        return SubmitAnswerResponse(
-            is_correct=is_correct,
-            correct_answer=correct_answer,
-            agent_feedback=agent_feedback,
-            points_earned=points_earned,
-            error_type=error_type,
-            technique_tip=technique_tip,
-            state_updated=True,
+        asyncio.create_task(self._persist_submission(
+            user_id=user_id,
+            instance=instance,
+            profile=profile,
+            perf_data=perf_data,
             skill_name=skill_name,
-            skill_score=round(skill_data.score, 1),
-            global_level=round(profile.global_level, 1),
-        )
+            sub_skill=sub_skill,
+            question=question,
+            correct_answer=correct_answer,
+            user_answer=user_answer,
+            difficulty=difficulty,
+            is_correct=is_correct,
+            time_taken_ms=time_taken_ms,
+            error_type=error_type,
+        ))
+
+        return response
+
+    async def _persist_submission(
+        self,
+        user_id: UUID,
+        instance,
+        profile,
+        perf_data: dict,
+        skill_name: str,
+        sub_skill: Optional[str],
+        question: str,
+        correct_answer: str,
+        user_answer: str,
+        difficulty: int,
+        is_correct: bool,
+        time_taken_ms: Optional[int],
+        error_type: Optional[str],
+    ):
+        """Persist all submission data to DB in parallel (background task)."""
+        async def save_performance():
+            try:
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("exercise_performances").insert(perf_data).execute()
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save performance: {e}")
+
+        async def save_profile():
+            try:
+                state_dict = self._save_profile(profile)
+                updates = {
+                    "state": state_dict,
+                    "current_level": max(1, int(profile.global_level / 20)),
+                }
+                if profile.diagnostic_completed and not instance.diagnostic_completed:
+                    updates["diagnostic_completed"] = True
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("agent_instances")
+                        .update(updates).eq("id", str(instance.id)).execute()
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save profile: {e}")
+
+        tasks = [
+            save_performance(),
+            save_profile(),
+            self._save_daily_snapshot(user_id, profile),
+            self._update_spaced_repetition(
+                user_id, skill_name, sub_skill, question,
+                correct_answer, difficulty, is_correct, time_taken_ms
+            ),
+        ]
+        if error_type:
+            tasks.append(self._store_error_pattern(
+                user_id, skill_name, error_type, question,
+                correct_answer, user_answer, time_taken_ms
+            ))
+
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     # ══════════════════════════════════════════
     #                  CHAT
@@ -596,7 +637,7 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
         time_taken_ms: Optional[int],
     ):
         try:
-            self.supabase.table("error_patterns").insert({
+            data = {
                 "user_id": str(user_id),
                 "skill": skill,
                 "error_type": error_type,
@@ -604,7 +645,10 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
                 "correct_answer": correct_answer,
                 "user_answer": user_answer,
                 "time_taken_ms": time_taken_ms,
-            }).execute()
+            }
+            await asyncio.to_thread(
+                lambda: self.supabase.table("error_patterns").insert(data).execute()
+            )
         except Exception as e:
             logger.warning(f"Failed to store error pattern: {e}")
 
@@ -618,13 +662,14 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
             expected_ms = EXPECTED_TIME_MS.get(difficulty, 10000)
             quality = compute_sr_quality(is_correct, time_taken_ms, expected_ms)
 
-            # Check if item exists
-            result = self.supabase.table("spaced_repetition_queue")\
-                .select("*")\
-                .eq("user_id", str(user_id))\
-                .eq("question", question)\
-                .limit(1)\
-                .execute()
+            result = await asyncio.to_thread(
+                lambda: self.supabase.table("spaced_repetition_queue")
+                    .select("*")
+                    .eq("user_id", str(user_id))
+                    .eq("question", question)
+                    .limit(1)
+                    .execute()
+            )
 
             if result.data:
                 item_data = result.data[0]
@@ -634,25 +679,25 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
                     interval_days=item_data["interval_days"],
                 )
                 sr.update(quality)
-
-                self.supabase.table("spaced_repetition_queue")\
-                    .update({
-                        "repetitions": sr.repetitions,
-                        "ease_factor": sr.ease_factor,
-                        "interval_days": sr.interval_days,
-                        "next_review": sr.next_review.isoformat() if sr.next_review else None,
-                        "last_reviewed": datetime.now(timezone.utc).isoformat(),
-                        "total_attempts": item_data["total_attempts"] + 1,
-                        "total_correct": item_data["total_correct"] + (1 if is_correct else 0),
-                        "avg_time_ms": time_taken_ms,
-                    })\
-                    .eq("id", item_data["id"])\
-                    .execute()
+                update_payload = {
+                    "repetitions": sr.repetitions,
+                    "ease_factor": sr.ease_factor,
+                    "interval_days": sr.interval_days,
+                    "next_review": sr.next_review.isoformat() if sr.next_review else None,
+                    "last_reviewed": datetime.now(timezone.utc).isoformat(),
+                    "total_attempts": item_data["total_attempts"] + 1,
+                    "total_correct": item_data["total_correct"] + (1 if is_correct else 0),
+                    "avg_time_ms": time_taken_ms,
+                }
+                item_id = item_data["id"]
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("spaced_repetition_queue")
+                        .update(update_payload).eq("id", item_id).execute()
+                )
             elif not is_correct:
-                # Only add to SR queue on mistakes
                 sr = SRItem()
                 sr.update(quality)
-                self.supabase.table("spaced_repetition_queue").insert({
+                insert_payload = {
                     "user_id": str(user_id),
                     "skill": skill,
                     "sub_skill": sub_skill,
@@ -665,7 +710,10 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
                     "next_review": sr.next_review.isoformat() if sr.next_review else None,
                     "total_attempts": 1,
                     "total_correct": 0,
-                }).execute()
+                }
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("spaced_repetition_queue").insert(insert_payload).execute()
+                )
         except Exception as e:
             logger.warning(f"SR update failed: {e}")
 
@@ -674,14 +722,17 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
         try:
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             scores = profile.skill_vector.get_scores()
-
-            self.supabase.table("skill_snapshots").upsert({
+            payload = {
                 "user_id": str(user_id),
                 "snapshot_date": today,
                 "global_level": round(profile.global_level),
                 "skill_vector": scores,
                 "total_exercises": profile.total_exercises,
-            }, on_conflict="user_id,snapshot_date").execute()
+            }
+            await asyncio.to_thread(
+                lambda: self.supabase.table("skill_snapshots")
+                    .upsert(payload, on_conflict="user_id,snapshot_date").execute()
+            )
         except Exception as e:
             logger.warning(f"Snapshot save failed: {e}")
 
