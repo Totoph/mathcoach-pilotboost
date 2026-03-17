@@ -100,6 +100,19 @@ const SKILL_LABELS: Record<string, string> = {
   chain: "Chaînes",
 };
 
+const SKILL_ICONS: Record<string, string> = {
+  addition: "➕",
+  subtraction: "➖",
+  multiplication: "✖️",
+  division: "➗",
+  tables_1_20: "📋",
+  squares_1_30: "²",
+  fast_multiplication: "⚡",
+  mixed: "🔀",
+  chain: "🔗",
+  advanced: "🧠",
+};
+
 export default function TrainClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -186,6 +199,8 @@ export default function TrainClient() {
   // Chat (only user-initiated)
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [showExerciseMenu, setShowExerciseMenu] = useState(false);
+  const [menuIndex, setMenuIndex] = useState(0);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Mobile coach bottom sheet
@@ -691,7 +706,16 @@ export default function TrainClient() {
     { label: "C'est quoi la décomposition ?", text: "Explique moi la technique de décomposition" },
   ];
 
+  const exerciseMenuFilter = chatInput.startsWith("/")
+    ? chatInput.slice(1).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    : "";
+  const filteredSkills = Object.entries(SKILL_LABELS).filter(([, label]) =>
+    label.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(exerciseMenuFilter)
+  );
+
   function matchLocalIntent(msg: string): { skill: string; difficulty: number; description: string } | null {
+    const wordCount = msg.trim().split(/\s+/).length;
+    if (msg.includes("?") || wordCount > 8) return null;
     const m = msg.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     if (/carr[eé]s?|square/.test(m)) return { skill: "squares_1_30", difficulty: m.includes("difficile") || m.includes("dur") ? 4 : 2, description: "Carrés" };
     if (/table/.test(m)) return { skill: "tables_1_20", difficulty: 2, description: "Tables de multiplication" };
@@ -755,6 +779,17 @@ export default function TrainClient() {
       if (finalList.length > 0) launchCustomSeries(finalList, "Faiblesses ciblées");
     } catch {
       setMessages((prev) => [...prev, { role: "agent", message: "Erreur lors de la génération. Réessaie.", timestamp: Date.now() }]);
+    }
+  }
+
+  async function handleExerciseMenuSelect(skill: string) {
+    setChatInput("");
+    setShowExerciseMenu(false);
+    try {
+      const res = await api.generateSkillSeries(skill, 2, SERIES_SIZE);
+      if (res.exercises.length > 0) launchCustomSeries(res.exercises, SKILL_LABELS[skill]);
+    } catch {
+      setMessages((prev) => [...prev, { role: "agent", message: "Erreur lors de la génération.", timestamp: Date.now() }]);
     }
   }
 
@@ -1347,23 +1382,52 @@ export default function TrainClient() {
               </div>
 
               <div className="flex-shrink-0 p-2.5 border-t border-slate-100">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.stopPropagation();
-                        handleSendChat();
-                      }
-                    }}
-                    placeholder="Pose-moi une question..."
-                    className="flex-1 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:border-primary focus:outline-none text-sm"
-                  />
-                  <button onClick={handleSendChat} className="p-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all">
-                    <Send className="w-3.5 h-3.5" />
-                  </button>
+                <div className="relative">
+                  {showExerciseMenu && filteredSkills.length > 0 && (
+                    <div className="absolute bottom-full mb-1 left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-50">
+                      {filteredSkills.map(([skill, label], i) => (
+                        <button
+                          key={skill}
+                          onMouseDown={(e) => { e.preventDefault(); handleExerciseMenuSelect(skill); }}
+                          className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 transition-colors ${
+                            i === menuIndex ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50"
+                          }`}
+                        >
+                          <span>{SKILL_ICONS[skill]}</span>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setChatInput(val);
+                        setShowExerciseMenu(val.startsWith("/"));
+                        setMenuIndex(0);
+                      }}
+                      onKeyDown={(e) => {
+                        if (showExerciseMenu && filteredSkills.length > 0) {
+                          if (e.key === "ArrowDown") { e.preventDefault(); setMenuIndex((i) => Math.min(i + 1, filteredSkills.length - 1)); return; }
+                          if (e.key === "ArrowUp") { e.preventDefault(); setMenuIndex((i) => Math.max(i - 1, 0)); return; }
+                          if (e.key === "Enter") { e.preventDefault(); handleExerciseMenuSelect(filteredSkills[menuIndex][0]); return; }
+                          if (e.key === "Escape") { setShowExerciseMenu(false); setChatInput(""); return; }
+                        }
+                        if (e.key === "Enter") {
+                          e.stopPropagation();
+                          handleSendChat();
+                        }
+                      }}
+                      placeholder="Question ou /exercice..."
+                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:border-primary focus:outline-none text-sm"
+                    />
+                    <button onClick={handleSendChat} className="p-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all">
+                      <Send className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </>
@@ -1565,23 +1629,52 @@ export default function TrainClient() {
 
         {/* Chat input */}
         <div className="flex-shrink-0 p-3 border-t border-slate-100">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.stopPropagation();
-                  handleSendChat();
-                }
-              }}
-              placeholder="Pose-moi une question..."
-              className="flex-1 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:border-primary focus:outline-none text-sm"
-            />
-            <button onClick={handleSendChat} className="p-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all">
-              <Send className="w-4 h-4" />
-            </button>
+          <div className="relative">
+            {showExerciseMenu && filteredSkills.length > 0 && (
+              <div className="absolute bottom-full mb-1 left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-50">
+                {filteredSkills.map(([skill, label], i) => (
+                  <button
+                    key={skill}
+                    onMouseDown={(e) => { e.preventDefault(); handleExerciseMenuSelect(skill); }}
+                    className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 transition-colors ${
+                      i === menuIndex ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span>{SKILL_ICONS[skill]}</span>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setChatInput(val);
+                  setShowExerciseMenu(val.startsWith("/"));
+                  setMenuIndex(0);
+                }}
+                onKeyDown={(e) => {
+                  if (showExerciseMenu && filteredSkills.length > 0) {
+                    if (e.key === "ArrowDown") { e.preventDefault(); setMenuIndex((i) => Math.min(i + 1, filteredSkills.length - 1)); return; }
+                    if (e.key === "ArrowUp") { e.preventDefault(); setMenuIndex((i) => Math.max(i - 1, 0)); return; }
+                    if (e.key === "Enter") { e.preventDefault(); handleExerciseMenuSelect(filteredSkills[menuIndex][0]); return; }
+                    if (e.key === "Escape") { setShowExerciseMenu(false); setChatInput(""); return; }
+                  }
+                  if (e.key === "Enter") {
+                    e.stopPropagation();
+                    handleSendChat();
+                  }
+                }}
+                placeholder="Question ou /exercice..."
+                className="flex-1 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl focus:border-primary focus:outline-none text-sm"
+              />
+              <button onClick={handleSendChat} className="p-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all">
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
