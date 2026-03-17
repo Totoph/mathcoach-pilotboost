@@ -175,7 +175,8 @@ export default function TrainClient() {
   // Paywall
   const [showPaywall, setShowPaywall] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
-  const FREE_LIMIT = 100;
+  const FREE_LIMIT = 300;
+  const exercisesLimitRef = useRef(FREE_LIMIT);
 
   // Coach mastery suggestion popup
   const [showCoachSuggestion, setShowCoachSuggestion] = useState(false);
@@ -298,8 +299,11 @@ export default function TrainClient() {
         const sub = await api.getSubscriptionStatus();
         if (sub.plan !== "free" && sub.active) {
           setIsPremium(true);
-        } else if (sub.total_exercises >= 100) {
-          setShowPaywall(true);
+        } else {
+          exercisesLimitRef.current = sub.exercises_limit;
+          if (sub.total_exercises >= sub.exercises_limit) {
+            setShowPaywall(true);
+          }
         }
       } catch {}
 
@@ -421,7 +425,7 @@ export default function TrainClient() {
       setAnswerState("correct");
       setTotalExercises((prev) => {
         const next = prev + 1;
-        if (!isPremium && next >= FREE_LIMIT) setTimeout(() => setShowPaywall(true), 600);
+        if (!isPremium && next >= exercisesLimitRef.current) setTimeout(() => setShowPaywall(true), 600);
         return next;
       });
 

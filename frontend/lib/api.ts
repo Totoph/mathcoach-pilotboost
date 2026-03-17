@@ -47,6 +47,7 @@ export interface SubscriptionStatus {
   cancel_at_period_end: boolean;
   total_exercises: number;
   exercises_limit: number;
+  bonus_exercises: number;
 }
 
 export interface SkillScore {
@@ -207,5 +208,9 @@ export const api = {
 
   async verifyCheckoutSession(sessionId: string): Promise<{ status: string; plan?: string }> {
     return apiGet<{ status: string; plan?: string }>(`/payments/verify-session?session_id=${sessionId}`);
+  },
+
+  async redeemCoupon(code: string): Promise<{ status: string; extra_exercises: number }> {
+    return apiPost<{ status: string; extra_exercises: number }>('/payments/redeem-coupon', { code });
   },
 };

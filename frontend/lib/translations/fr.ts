@@ -118,7 +118,7 @@ const fr = {
   profile_plan_yearly: "Annuel",
   profile_plan_lifetime: "À vie",
   profile_plan_active: "Actif",
-  profile_plan_desc_free: "100 calculs inclus",
+  profile_plan_desc_free: "300 exercices inclus",
   profile_plan_desc_monthly: "4,99€/mois – Calculs illimités",
   profile_plan_desc_yearly: "19,99€/an – Calculs illimités",
   profile_plan_desc_lifetime: "49€ une fois – Accès à vie",
@@ -129,6 +129,10 @@ const fr = {
   profile_expires: "Expire le",
   profile_upgrade: "Passer Premium",
   profile_upgrade_desc: "Débloquez l'accès illimité aux exercices",
+  coupon_placeholder: "CODE PROMO",
+  coupon_apply: "Appliquer",
+  coupon_success: "+{n} calculs gratuits ajoutés à votre compte !",
+  coupon_error: "Code invalide ou déjà utilisé",
 
   // ─── Stats ───
   stats_title: "Statistiques",
@@ -192,7 +196,7 @@ const fr = {
 
   // ─── Paywall ───
   paywall_title: "Vous avez atteint la limite gratuite",
-  paywall_subtitle: "Vous avez effectué 100 calculs. Passez à un plan premium pour continuer !",
+  paywall_subtitle: "Vous avez effectué 300 calculs. Passez à un plan premium pour continuer !",
   paywall_monthly: "Mensuel",
   paywall_monthly_price: "4,99€",
   paywall_monthly_period: "/mois",

@@ -54,7 +54,12 @@ class SubscriptionStatus(BaseModel):
     current_period_end: str | None = None
     cancel_at_period_end: bool = False
     total_exercises: int = 0
-    exercises_limit: int = 100
+    exercises_limit: int = 300
+    bonus_exercises: int = 0
+
+
+class RedeemCouponRequest(BaseModel):
+    code: str
 
 
 # ─── Routes ───
@@ -78,9 +83,20 @@ async def get_subscription_status(request: Request):
             total_exercises = exercises_result.count or 0
     except Exception as e:
         logger.warning(f"Could not count exercises for user {user_id}: {e}")
-    
+
+    # Count bonus exercises from redeemed coupons
+    bonus_exercises = 0
+    try:
+        redemptions = sb.table("coupon_redemptions").select("extra_exercises").eq("user_id", user_id).execute()
+        if redemptions.data:
+            bonus_exercises = sum(r["extra_exercises"] for r in redemptions.data)
+    except Exception as e:
+        logger.warning(f"Could not count bonus exercises for user {user_id}: {e}")
+
     if result.data and len(result.data) > 0:
         sub = result.data[0]
+        is_free = sub.get("plan", "free") == "free"
+        limit = (300 + bonus_exercises) if is_free else 999999
         return SubscriptionStatus(
             plan=sub.get("plan", "free"),
             active=sub.get("active", False),
@@ -89,14 +105,16 @@ async def get_subscription_status(request: Request):
             current_period_end=sub.get("current_period_end"),
             cancel_at_period_end=sub.get("cancel_at_period_end", False),
             total_exercises=total_exercises,
-            exercises_limit=100 if sub.get("plan", "free") == "free" else 999999,
+            exercises_limit=limit,
+            bonus_exercises=bonus_exercises,
         )
-    
+
     return SubscriptionStatus(
         plan="free",
         active=False,
         total_exercises=total_exercises,
-        exercises_limit=100,
+        exercises_limit=300 + bonus_exercises,
+        bonus_exercises=bonus_exercises,
     )
 
 
@@ -147,6 +165,7 @@ async def create_checkout_session(body: CreateCheckoutRequest, request: Request)
     session_params = {
         "customer": customer_id,
         "mode": mode,
+        "currency": "eur",
         "success_url": f"{frontend_url}/profile?payment=success&session_id={{CHECKOUT_SESSION_ID}}",
         "cancel_url": f"{frontend_url}/profile?payment=cancelled",
         "metadata": {
@@ -245,6 +264,51 @@ async def cancel_subscription(request: Request):
     }).eq("user_id", user_id).execute()
     
     return {"status": "cancelled_at_period_end"}
+
+
+@router.post("/redeem-coupon")
+async def redeem_coupon(body: RedeemCouponRequest, request: Request):
+    """Redeem a coupon code to grant bonus free exercises."""
+    user_id = get_user_id_from_request(request)
+    sb = get_supabase_admin()
+
+    code = body.code.strip().upper()
+
+    # Fetch coupon
+    result = sb.table("coupons").select("*").eq("code", code).eq("active", True).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Code invalide ou expiré")
+
+    coupon = result.data[0]
+
+    # Check expiry
+    if coupon.get("expires_at"):
+        from datetime import timezone
+        expires = datetime.fromisoformat(coupon["expires_at"].replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) > expires:
+            raise HTTPException(status_code=400, detail="Ce code a expiré")
+
+    # Check max uses
+    if coupon["max_uses"] is not None and coupon["uses_count"] >= coupon["max_uses"]:
+        raise HTTPException(status_code=400, detail="Ce code a atteint sa limite d'utilisation")
+
+    # Check if user already redeemed this coupon
+    existing = sb.table("coupon_redemptions").select("id").eq("user_id", user_id).eq("coupon_id", coupon["id"]).execute()
+    if existing.data:
+        raise HTTPException(status_code=400, detail="Vous avez déjà utilisé ce code")
+
+    # Insert redemption
+    sb.table("coupon_redemptions").insert({
+        "user_id": user_id,
+        "coupon_id": coupon["id"],
+        "extra_exercises": coupon["extra_exercises"],
+    }).execute()
+
+    # Increment uses_count
+    sb.table("coupons").update({"uses_count": coupon["uses_count"] + 1}).eq("id", coupon["id"]).execute()
+
+    logger.info(f"Coupon redeemed: user={user_id} code={code} extra={coupon['extra_exercises']}")
+    return {"status": "redeemed", "extra_exercises": coupon["extra_exercises"]}
 
 
 @router.post("/webhook")

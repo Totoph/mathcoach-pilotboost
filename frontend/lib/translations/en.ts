@@ -118,7 +118,7 @@ const en = {
   profile_plan_yearly: "Yearly",
   profile_plan_lifetime: "Lifetime",
   profile_plan_active: "Active",
-  profile_plan_desc_free: "100 calculations included",
+  profile_plan_desc_free: "300 exercises included",
   profile_plan_desc_monthly: "€4.99/month – Unlimited calculations",
   profile_plan_desc_yearly: "€19.99/year – Unlimited calculations",
   profile_plan_desc_lifetime: "€49 once – Lifetime access",
@@ -129,6 +129,10 @@ const en = {
   profile_expires: "Expires on",
   profile_upgrade: "Go Premium",
   profile_upgrade_desc: "Unlock unlimited access to exercises",
+  coupon_placeholder: "PROMO CODE",
+  coupon_apply: "Apply",
+  coupon_success: "+{n} free calculations added to your account!",
+  coupon_error: "Invalid or already used code",
 
   // ─── Stats ───
   stats_title: "Statistics",
@@ -192,7 +196,7 @@ const en = {
 
   // ─── Paywall ───
   paywall_title: "You've reached the free limit",
-  paywall_subtitle: "You've completed 100 calculations. Upgrade to a premium plan to continue!",
+  paywall_subtitle: "You've completed 300 calculations. Upgrade to a premium plan to continue!",
   paywall_monthly: "Monthly",
   paywall_monthly_price: "€4.99",
   paywall_monthly_period: "/month",

@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, User2, LogOut, RotateCcw, Trash2, Bell, Volume2, CreditCard, Crown, XCircle, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, User2, LogOut, RotateCcw, Trash2, Bell, Volume2, CreditCard, Crown, XCircle, CheckCircle2, Tag } from "lucide-react";
 import { getUser, signOut, supabase } from "@/lib/supabase";
 import { api, SubscriptionStatus } from "@/lib/api";
 import { useTranslation } from "@/lib/i18n";
@@ -31,6 +31,9 @@ function ProfileContent() {
   const [subscription, setSubscription] = useState<SubscriptionStatus | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [couponCode, setCouponCode] = useState("");
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponMessage, setCouponMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     async function init() {
@@ -124,6 +127,23 @@ function ProfileContent() {
     yearly: t("profile_plan_desc_yearly"),
     lifetime: t("profile_plan_desc_lifetime"),
   };
+
+  async function handleRedeemCoupon() {
+    if (!couponCode.trim()) return;
+    setCouponLoading(true);
+    setCouponMessage(null);
+    try {
+      const result = await api.redeemCoupon(couponCode.trim());
+      setCouponMessage({ type: "success", text: t("coupon_success").replace("{n}", String(result.extra_exercises)) });
+      setCouponCode("");
+      const sub = await api.getSubscriptionStatus();
+      setSubscription(sub);
+    } catch (e: any) {
+      setCouponMessage({ type: "error", text: e.message || t("coupon_error") });
+    } finally {
+      setCouponLoading(false);
+    }
+  }
 
   async function handleCancelSubscription() {
     try {
@@ -252,7 +272,7 @@ function ProfileContent() {
                     {subscription?.total_exercises ?? 0}
                   </span>
                   <span className="text-xs text-slate-400">
-                    /{(subscription?.plan || "free") === "free" ? "100" : "∞"}
+                    /{(subscription?.plan || "free") === "free" ? (subscription?.exercises_limit ?? 300) : "∞"}
                   </span>
                 </div>
               </div>
@@ -292,6 +312,37 @@ function ProfileContent() {
                     </div>
                   )}
                 </>
+              )}
+
+              {/* Coupon code */}
+              {(!subscription || subscription.plan === "free" || subscription.cancel_at_period_end) && (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="text"
+                        value={couponCode}
+                        onChange={(e) => { setCouponCode(e.target.value.toUpperCase()); setCouponMessage(null); }}
+                        onKeyDown={(e) => e.key === "Enter" && handleRedeemCoupon()}
+                        placeholder={t("coupon_placeholder")}
+                        className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm font-mono focus:outline-none focus:border-primary transition-all"
+                      />
+                    </div>
+                    <button
+                      onClick={handleRedeemCoupon}
+                      disabled={couponLoading || !couponCode.trim()}
+                      className="px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    >
+                      {couponLoading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : t("coupon_apply")}
+                    </button>
+                  </div>
+                  {couponMessage && (
+                    <p className={`text-xs px-1 ${couponMessage.type === "success" ? "text-green-600" : "text-red-500"}`}>
+                      {couponMessage.text}
+                    </p>
+                  )}
+                </div>
               )}
 
               {/* Upgrade / Passer Premium button */}
