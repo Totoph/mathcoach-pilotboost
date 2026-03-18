@@ -429,12 +429,57 @@ def _gen_chain(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExe
 
 
 def _gen_advanced(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExercise:
-    """Advanced mental math techniques."""
+    """Advanced mental math techniques. At difficulty 5: large multiplications + complex chains."""
+    if difficulty >= 5:
+        # Pure random high-difficulty pool: large mult, complex chains, complex add/sub
+        pool = ["large_mult", "complex_chain", "complex_add_sub"]
+        technique = random.choice(pool)
+
+        if technique == "large_mult":
+            a = random.randint(100, 999)
+            b = random.randint(21, 99)
+            question = f"{a} × {b}"
+            answer = str(a * b)
+            tip = f"Décompose: {a} = {a // 100}×100 + {a % 100}, calcule chaque partie"
+            sub = "large_mult"
+
+        elif technique == "complex_chain":
+            # 5-6 operations with large numbers
+            ops = ["+", "−", "+", "−", "+"]
+            random.shuffle(ops)
+            nums = [random.randint(50, 999) for _ in range(len(ops) + 1)]
+            parts = [str(nums[0])]
+            result = nums[0]
+            for i, op in enumerate(ops):
+                n = nums[i + 1]
+                parts.append(f" {op} {n}")
+                result = result + n if op == "+" else result - n
+            question = "".join(parts) + " = ?"
+            answer = str(result)
+            tip = "Calcule de gauche à droite en gardant le résultat intermédiaire en tête"
+            sub = "complex_chain"
+
+        else:  # complex_add_sub
+            a = random.randint(1000, 9999)
+            b = random.randint(1000, 9999)
+            op = random.choice(["+", "−"])
+            result = a + b if op == "+" else a - b
+            question = f"{a} {op} {b}"
+            answer = str(result)
+            tip = "Décompose en centaines et dizaines, calcule colonne par colonne"
+            sub = "complex_add_sub"
+
+        return GeneratedExercise(
+            exercise_id=str(uuid4()), skill="advanced", sub_skill=sub,
+            question=question, correct_answer=answer, difficulty=5,
+            time_limit_ms=TIME_LIMITS[5] + 8000, tip=tip,
+        )
+
+    # Difficulty 1-4: existing techniques
     techniques = ["vedic_squares", "cross_multiplication", "anchor_method"]
     technique = sub_skill if sub_skill in techniques else random.choice(techniques)
 
     if technique == "vedic_squares":
-        # Numbers close to base (10, 100)
         if difficulty <= 3:
             base = 10
             n = random.randint(11, 19)
@@ -449,12 +494,10 @@ def _gen_advanced(difficulty: int, sub_skill: Optional[str] = None) -> Generated
         sub = "vedic_squares"
 
     elif technique == "cross_multiplication":
-        # Two 2-digit numbers
         a = random.randint(11, 30 + difficulty * 10)
         b = random.randint(11, 30 + difficulty * 10)
         question = f"{a} × {b}"
         answer = str(a * b)
-        # Cross multiplication explanation
         a1, a0 = a // 10, a % 10
         b1, b0 = b // 10, b % 10
         tip = (f"Multiplication croisée: ({a1}×{b1})×100 + ({a1}×{b0}+{a0}×{b1})×10 + {a0}×{b0} = "
@@ -462,7 +505,6 @@ def _gen_advanced(difficulty: int, sub_skill: Optional[str] = None) -> Generated
         sub = "cross_multiplication"
 
     else:  # anchor_method
-        # Anchor to nearby round number
         base = random.choice([25, 50, 75, 100])
         offset = random.randint(1, 5)
         n = base + random.choice([-1, 1]) * offset

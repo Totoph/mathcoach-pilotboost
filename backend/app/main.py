@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
 from app.api.routes import auth, exercises, users, agent, payments
 import logging
 import os
@@ -10,8 +11,59 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+async def _run_migrations():
+    """Apply any pending DDL migrations at startup (idempotent)."""
+    try:
+        from app.core.supabase import get_supabase_admin
+        import asyncio
+        sb = get_supabase_admin()
+        migration_sql = """
+        CREATE TABLE IF NOT EXISTS session_slow_queue (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+            skill TEXT NOT NULL,
+            sub_skill TEXT,
+            question TEXT NOT NULL,
+            correct_answer TEXT NOT NULL,
+            difficulty INTEGER NOT NULL DEFAULT 1,
+            time_taken_ms INTEGER,
+            threshold_ms INTEGER,
+            source_mode TEXT NOT NULL DEFAULT 'tables',
+            next_review_at TIMESTAMPTZ DEFAULT NOW(),
+            review_interval INTEGER DEFAULT 1,
+            consecutive_fast_sessions INTEGER DEFAULT 0,
+            consecutive_slow_sessions INTEGER DEFAULT 1,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(user_id, question)
+        );
+        ALTER TABLE session_slow_queue ADD COLUMN IF NOT EXISTS source_mode TEXT NOT NULL DEFAULT 'tables';
+        ALTER TABLE session_slow_queue ADD COLUMN IF NOT EXISTS next_review_at TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE session_slow_queue ADD COLUMN IF NOT EXISTS review_interval INTEGER DEFAULT 1;
+        ALTER TABLE session_slow_queue ADD COLUMN IF NOT EXISTS consecutive_fast_sessions INTEGER DEFAULT 0;
+        CREATE INDEX IF NOT EXISTS idx_session_slow_queue_user ON session_slow_queue(user_id);
+        CREATE INDEX IF NOT EXISTS idx_session_slow_queue_review ON session_slow_queue(user_id, next_review_at ASC);
+        CREATE INDEX IF NOT EXISTS idx_session_slow_queue_mode ON session_slow_queue(user_id, source_mode, next_review_at ASC);
+        """
+        await asyncio.to_thread(
+            lambda: sb.rpc("exec_ddl", {"ddl": migration_sql}).execute()
+        )
+        logger.info("Migrations applied successfully.")
+    except Exception as e:
+        # Table may already exist or exec_ddl not available — not fatal.
+        logger.warning(f"Migration skipped (table may already exist): {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await _run_migrations()
+    yield
+
+
 app = FastAPI(
     title="MathCoach by PilotBoost",
+    lifespan=lifespan,
     description="AI-powered mental math training for competitive exam preparation",
     version="2.0.0",
 )

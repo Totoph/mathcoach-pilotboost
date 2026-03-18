@@ -136,6 +136,84 @@ EXPECTED_TIME_MS = {
     5: 6000,
 }
 
+# ── Automaticity threshold (Logan 1988 / Ashcraft 1992) ──
+# A response is considered automatic when given in under 1.2s.
+AUTOMATICITY_MS = 1200
+
+# ── "Slow" thresholds per skill and difficulty (ms) ──
+# Based on Ashcraft (1992) cognitive arithmetic RT research.
+# If time_taken_ms > threshold → exercise is flagged for next session.
+# Keyed as (skill_category, difficulty): threshold_ms
+# skill_category maps groups of skills to their threshold table.
+SLOW_THRESHOLD_MS: dict[tuple[str, int], int] = {
+    # Tables / multiplication facts (problem-size effect: large facts take longer)
+    ("tables", 1): 3000,
+    ("tables", 2): 3500,
+    ("tables", 3): 4000,
+    ("tables", 4): 5000,
+    ("tables", 5): 5000,
+    # Addition
+    ("addition", 1): 3000,
+    ("addition", 2): 3500,
+    ("addition", 3): 5000,
+    ("addition", 4): 6000,
+    ("addition", 5): 8000,
+    # Subtraction (consistently ~150-300ms slower than addition)
+    ("subtraction", 1): 4000,
+    ("subtraction", 2): 4500,
+    ("subtraction", 3): 6000,
+    ("subtraction", 4): 7000,
+    ("subtraction", 5): 9000,
+    # Division (retrieved via corresponding multiplication fact, ~150-300ms slower)
+    ("division", 1): 4000,
+    ("division", 2): 4500,
+    ("division", 3): 5500,
+    ("division", 4): 6500,
+    ("division", 5): 7000,
+    # Chain calculations (each step adds ~600-800ms WM overhead)
+    ("chain", 1): 6000,
+    ("chain", 2): 8000,
+    ("chain", 3): 10000,
+    ("chain", 4): 12000,
+    ("chain", 5): 15000,
+    # Mixed / advanced (complex multi-step)
+    ("mixed", 1): 6000,
+    ("mixed", 2): 8000,
+    ("mixed", 3): 10000,
+    ("mixed", 4): 12000,
+    ("mixed", 5): 15000,
+    ("advanced", 1): 8000,
+    ("advanced", 2): 10000,
+    ("advanced", 3): 12000,
+    ("advanced", 4): 14000,
+    ("advanced", 5): 16000,
+}
+
+# Map skill names → threshold category
+SKILL_THRESHOLD_CATEGORY: dict[str, str] = {
+    "tables_1_20": "tables",
+    "multiplication": "tables",
+    "fast_multiplication": "tables",
+    "squares_1_30": "tables",
+    "addition": "addition",
+    "subtraction": "subtraction",
+    "division": "division",
+    "chain": "chain",
+    "mixed": "mixed",
+    "advanced": "advanced",
+}
+
+
+def get_slow_threshold(skill_name: str, difficulty: int) -> int:
+    """Return the 'slow' threshold in ms for a given skill and difficulty."""
+    category = SKILL_THRESHOLD_CATEGORY.get(skill_name, "mixed")
+    return SLOW_THRESHOLD_MS.get((category, difficulty), 8000)
+
+
+def is_slow(skill_name: str, difficulty: int, time_ms: int) -> bool:
+    """Return True if the response time exceeded the slow threshold."""
+    return time_ms > get_slow_threshold(skill_name, difficulty)
+
 
 # ────────────────────────── Data Classes ──────────────────────────
 
@@ -222,6 +300,7 @@ class UserCognitiveProfile:
     training_mode: Optional[str] = None  # "tables", "free", etc.
     diagnostic_completed: bool = False
     last_session_date: Optional[str] = None
+    slow_skills: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -237,7 +316,7 @@ class UserCognitiveProfile:
             "global_level", "total_exercises", "total_correct",
             "session_count", "strengths", "weaknesses", "focus_areas",
             "error_counts", "last_difficulty", "training_mode",
-            "diagnostic_completed", "last_session_date",
+            "diagnostic_completed", "last_session_date", "slow_skills",
         ]:
             if field_name in d:
                 setattr(profile, field_name, d[field_name])
@@ -533,11 +612,13 @@ def detect_plateau(score_history: list[float], min_points: int = 15) -> bool:
 def detect_automatization(skill: SkillData, min_attempts: int = 20) -> bool:
     """
     Detect if a skill is automated (mastered and fast).
-    Criteria: accuracy > 95% AND speed < 3s for last 20+ attempts.
+    Criteria: accuracy > 95% AND speed < AUTOMATICITY_MS (1.2s) for last 20+ attempts.
+    Based on Logan (1988) instance theory: automatic = direct memory retrieval,
+    confirmed by response time falling below the 1.2s threshold.
     """
     if skill.attempts < min_attempts:
         return False
-    return skill.accuracy_ema > 0.95 and skill.speed_avg_ms < 3000
+    return skill.accuracy_ema > 0.95 and skill.speed_avg_ms < AUTOMATICITY_MS
 
 
 # ────────────────────────── Adaptive Difficulty ──────────────────────────
@@ -568,15 +649,14 @@ def select_next_skill(
 ) -> tuple[str, Optional[str]]:
     """
     Select which skill to practice next using smart selection.
-    
+
     Algorithm:
     1. If operation_filter is set → pick randomly from those skills
     2. If training_mode = "tables" → always tables_1_20
-    3. 30% chance: pick from spaced repetition (weakest due items)
-    4. 40% chance: pick weakest skill
-    5. 20% chance: pick a focus area
-    6. 10% chance: random (exploration)
-    
+    3. 40% chance: pick from slow_skills (non-mult skills that were slow last session)
+    4. 30% chance: pick from spaced repetition (weakest due items)
+    5. 30% chance: pick weakest / focus / random (exploration)
+
     Returns: (skill_name, sub_skill_name or None)
     """
     import random
@@ -585,13 +665,20 @@ def select_next_skill(
     if training_mode == "tables":
         return "tables_1_20", _pick_weakest_table(profile.skill_vector)
 
-    # Operation filter: pick randomly from selected skills
+    # Operation filter: pure equal-weight random among selected skills
     if operation_filter:
         valid = [op for op in operation_filter if op in SKILL_DEFINITIONS]
         if valid:
             return random.choice(valid), None
 
     sv = profile.skill_vector
+
+    # Slow skills boost — only in adaptive mode (no filter, not tables)
+    slow_skills = getattr(profile, "slow_skills", [])
+    valid_slow = [s for s in slow_skills if s in SKILL_DEFINITIONS]
+    if valid_slow and random.random() < 0.40:
+        return random.choice(valid_slow), None
+
     roll = random.random()
 
     if roll < 0.30 and profile.weaknesses:

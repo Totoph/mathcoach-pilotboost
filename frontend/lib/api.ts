@@ -127,6 +127,27 @@ export interface SmartSeriesResult {
   example_used: string | null;
 }
 
+export interface SlowExerciseItem {
+  question: string;
+  time_ms: number;
+  threshold_ms: number;
+  skill: string;
+}
+
+export interface AnalyzeSessionResult {
+  slow_count: number;
+  top3_slowest: SlowExerciseItem[];
+}
+
+export interface SessionResultItem {
+  question: string;
+  correct_answer: string;
+  skill_name: string | null;
+  difficulty: number;
+  time_ms: number;
+  sub_skill?: string | null;
+}
+
 // ─────────── API ───────────
 
 export const api = {
@@ -212,5 +233,9 @@ export const api = {
 
   async redeemCoupon(code: string): Promise<{ status: string; extra_exercises: number }> {
     return apiPost<{ status: string; extra_exercises: number }>('/payments/redeem-coupon', { code });
+  },
+
+  async analyzeSession(results: SessionResultItem[]): Promise<AnalyzeSessionResult> {
+    return apiPost<AnalyzeSessionResult>('/agent/analyze-session', { results });
   },
 };

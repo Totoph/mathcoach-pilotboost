@@ -18,6 +18,7 @@ from app.schemas.agent import (
     CustomSeriesRequest, CustomSeriesResponse,
     SmartSeriesRequest, SmartSeriesResponse,
     SkillSeriesRequest,
+    AnalyzeSessionRequest, AnalyzeSessionResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -327,3 +328,21 @@ async def smart_series(
         description=description,
         example_used=example_used,
     )
+
+
+@router.post("/analyze-session", response_model=AnalyzeSessionResponse)
+async def analyze_session(
+    request: AnalyzeSessionRequest,
+    current_user: dict = Depends(get_current_user),
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """
+    Called at the end of each 20-exercise session.
+    Flags slow exercises for the next session and returns the top 3 slowest
+    for display on the summary screen.
+    """
+    user_id = UUID(current_user["id"])
+    results = [r.model_dump() for r in request.results]
+    data = await agent_service.analyze_session(user_id, results)
+    return AnalyzeSessionResponse(**data)
+

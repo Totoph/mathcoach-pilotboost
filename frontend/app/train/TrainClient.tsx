@@ -22,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { getUser } from "@/lib/supabase";
-import { api, NextExercise } from "@/lib/api";
+import { api, NextExercise, SlowExerciseItem } from "@/lib/api";
 import VoiceTrainer from "@/components/VoiceTrainer";
 import PaywallPopup from "@/components/PaywallPopup";
 import CoachSuggestionModal from "@/components/CoachSuggestionModal";
@@ -45,7 +45,7 @@ interface SeriesResult {
   skill_name: string | null;
 }
 
-const SERIES_SIZE = 10;
+const SERIES_SIZE = 20;
 
 const EXCLUSIVE_MODES = [
   { key: "adaptive", label: "Adaptatif" },
@@ -141,7 +141,7 @@ export default function TrainClient() {
   const opButtonRef = useRef<HTMLButtonElement>(null);
   const opMenuRef = useRef<HTMLDivElement>(null);
 
-  // Series of 10
+  // Series of 20
   const [seriesResults, setSeriesResults] = useState<SeriesResult[]>([]);
   const [seriesIndex, setSeriesIndex] = useState(0);
   const [showPause, setShowPause] = useState(false);
@@ -161,6 +161,9 @@ export default function TrainClient() {
 
   // Loading state for buttons on pause screen
   const [seriesLoading, setSeriesLoading] = useState(false);
+
+  // Session analysis (top 3 slowest, from backend)
+  const [top3Slowest, setTop3Slowest] = useState<SlowExerciseItem[]>([]);
 
   // Settings
   const [showHints, setShowHints] = useState(true);
@@ -444,8 +447,10 @@ export default function TrainClient() {
       const newIdx = seriesIndex + 1;
       setSeriesIndex(newIdx);
 
-      if (newIdx >= SERIES_SIZE) setTimeout(() => setShowPause(true), 400);
-      else setTimeout(() => loadNextExercise(), 350);
+      if (newIdx >= SERIES_SIZE) {
+        triggerSessionAnalysis(newResults);
+        setTimeout(() => setShowPause(true), 400);
+      } else setTimeout(() => loadNextExercise(), 350);
 
       api
         .submitAnswer(exercise.exercise_id, finalAnswer, timeTaken)
@@ -487,8 +492,10 @@ export default function TrainClient() {
         const newIdx = seriesIndex + 1;
         setSeriesIndex(newIdx);
 
-        if (newIdx >= SERIES_SIZE) setTimeout(() => setShowPause(true), 400);
-        else setTimeout(() => loadNextExercise(), 350);
+        if (newIdx >= SERIES_SIZE) {
+          triggerSessionAnalysis(newResults);
+          setTimeout(() => setShowPause(true), 400);
+        } else setTimeout(() => loadNextExercise(), 350);
       }
     } catch (err: any) {
       if (err?.message?.includes("expired") || err?.message?.includes("not found")) loadNextExercise();
@@ -526,8 +533,10 @@ export default function TrainClient() {
       const newIdx = seriesIndex + 1;
       setSeriesIndex(newIdx);
 
-      if (newIdx >= SERIES_SIZE) setTimeout(() => setShowPause(true), 400);
-      else setTimeout(() => loadNextExercise(), 500);
+      if (newIdx >= SERIES_SIZE) {
+        triggerSessionAnalysis(newResults);
+        setTimeout(() => setShowPause(true), 400);
+      } else setTimeout(() => loadNextExercise(), 500);
 
       api
         .submitAnswer(exercise.exercise_id, choice, timeTaken)
@@ -558,8 +567,10 @@ export default function TrainClient() {
       setCorrectDisplay(exercise.correct_answer || "?");
       setTimeout(() => {
         setAnswerState("idle");
-        if (newIdx >= SERIES_SIZE) setShowPause(true);
-        else loadNextExercise();
+        if (newIdx >= SERIES_SIZE) {
+          triggerSessionAnalysis(newResults);
+          setShowPause(true);
+        } else loadNextExercise();
       }, 800);
 
       api.submitAnswer(exercise.exercise_id, choice, timeTaken).catch(() => {});
@@ -576,6 +587,7 @@ export default function TrainClient() {
     customPoolIdx.current = 0;
     setSeriesResults([]);
     setSeriesIndex(0);
+    setTop3Slowest([]);
     setSeriesStartTime(Date.now());
     setSkillScoresBefore((prev) => ({ ...prev, ...skillScoresAfter }));
     setSkillScoresAfter({});
@@ -651,7 +663,10 @@ export default function TrainClient() {
       const newIdx = seriesIndex + 1;
       setSeriesIndex(newIdx);
 
-      if (newIdx >= SERIES_SIZE) setTimeout(() => setShowPause(true), 800);
+      if (newIdx >= SERIES_SIZE) {
+        triggerSessionAnalysis(newResults);
+        setTimeout(() => setShowPause(true), 800);
+      }
 
       api
         .submitAnswer(exercise.exercise_id, answer, timeTaken)
@@ -677,7 +692,10 @@ export default function TrainClient() {
       setSeriesResults(newResults);
       const newIdx = seriesIndex + 1;
       setSeriesIndex(newIdx);
-      if (newIdx >= SERIES_SIZE) setTimeout(() => setShowPause(true), 800);
+      if (newIdx >= SERIES_SIZE) {
+        triggerSessionAnalysis(newResults);
+        setTimeout(() => setShowPause(true), 800);
+      }
     }
   }
 
@@ -898,6 +916,19 @@ export default function TrainClient() {
     loadNextExercise({ activeModes: newModes });
   }
 
+  function triggerSessionAnalysis(results: SeriesResult[]) {
+    const payload = results.map((r) => ({
+      question: r.question,
+      correct_answer: r.correct_answer,
+      skill_name: r.skill_name,
+      difficulty: (currentExercise?.difficulty ?? 1),
+      time_ms: r.time_ms,
+    }));
+    api.analyzeSession(payload)
+      .then((data) => setTop3Slowest(data.top3_slowest))
+      .catch(() => {});
+  }
+
   async function handleSwitchToWeakness() {
     setShowCoachSuggestion(false);
     if (!coachSuggestionData) return;
@@ -1026,6 +1057,23 @@ export default function TrainClient() {
               })}
             </div>
           </div>
+
+          {top3Slowest.length > 0 && (
+            <div className="bento-card p-4">
+              <h3 className="font-bold text-slate-900 text-xs mb-2">🐢 Les plus lents — repasseront en priorité</h3>
+              <div className="space-y-1.5">
+                {top3Slowest.map((item, i) => (
+                  <div key={i} className="flex items-center justify-between bg-amber-50/70 rounded-lg px-3 py-1.5">
+                    <span className="text-xs font-mono text-slate-700">{item.question}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-amber-600 font-bold">{(item.time_ms / 1000).toFixed(1)}s</span>
+                      <span className="text-[10px] text-slate-400">/ cible {(item.threshold_ms / 1000).toFixed(0)}s</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {wrongResults.length > 0 && (
             <div className="bento-card p-4">
@@ -1247,21 +1295,35 @@ export default function TrainClient() {
             )}
           </button>
 
-          {/* Desktop: progress dots */}
-          <div className="hidden sm:flex gap-1">
-            {Array.from({ length: SERIES_SIZE }).map((_, i) => (
-              <div
-                key={i}
-                className={`w-2 h-2 rounded-full transition-all ${
-                  i < seriesIndex ? (seriesResults[i]?.is_correct ? "bg-green-500" : "bg-red-400") : i === seriesIndex ? "bg-slate-900 scale-125" : "bg-slate-200"
-                }`}
-              />
-            ))}
-          </div>
-
-          <span className="text-xs font-bold text-slate-600 ml-auto sm:ml-0 flex-shrink-0">
-            {seriesIndex}/{SERIES_SIZE}
-          </span>
+          {/* Progress arc (desktop + mobile) */}
+          {(() => {
+            const size = 44;
+            const stroke = 4;
+            const r = (size - stroke) / 2;
+            const circ = 2 * Math.PI * r;
+            const progress = seriesIndex / SERIES_SIZE;
+            const dash = circ * progress;
+            return (
+              <div className="relative flex items-center justify-center flex-shrink-0">
+                <svg width={size} height={size} className="-rotate-90">
+                  {/* background track */}
+                  <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={stroke} />
+                  {/* filled arc */}
+                  <circle
+                    cx={size/2} cy={size/2} r={r} fill="none"
+                    stroke="#0f172a"
+                    strokeWidth={stroke}
+                    strokeDasharray={`${dash} ${circ}`}
+                    strokeLinecap="round"
+                    className="transition-all duration-300"
+                  />
+                </svg>
+                <span className="absolute text-[10px] font-extrabold text-slate-700 leading-none pointer-events-none">
+                  {seriesIndex}/{SERIES_SIZE}
+                </span>
+              </div>
+            );
+          })()}
         </div>
 
         <div className="bento-card p-2.5 flex items-center justify-center sm:justify-end gap-1.5 sm:gap-2.5">

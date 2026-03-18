@@ -68,6 +68,7 @@ class AgentState(BaseModel):
     training_mode: Optional[str] = None
     last_session_date: Optional[str] = None
     pending_exercise: Optional[Dict] = None
+    slow_skills: List[str] = Field(default_factory=list)
 
 
 class AgentInstance(BaseModel):
@@ -157,6 +158,31 @@ class SkillSeriesRequest(BaseModel):
 class SmartSeriesRequest(BaseModel):
     message: str  # natural language, e.g. "donne moi des carrés"
     count: int = 10
+
+
+class SessionResultItem(BaseModel):
+    question: str
+    correct_answer: str
+    skill_name: Optional[str] = None
+    difficulty: int = 1
+    time_ms: int = 0
+    sub_skill: Optional[str] = None
+
+
+class AnalyzeSessionRequest(BaseModel):
+    results: List[SessionResultItem]
+
+
+class SlowExerciseItem(BaseModel):
+    question: str
+    time_ms: int
+    threshold_ms: int
+    skill: str
+
+
+class AnalyzeSessionResponse(BaseModel):
+    slow_count: int
+    top3_slowest: List[SlowExerciseItem]
 
 
 class SmartSeriesResponse(BaseModel):

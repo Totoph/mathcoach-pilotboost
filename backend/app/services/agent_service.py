@@ -36,6 +36,9 @@ from app.services.skill_engine import (
     compute_sr_quality,
     SRItem,
     EXPECTED_TIME_MS,
+    get_slow_threshold,
+    is_slow,
+    AUTOMATICITY_MS,
 )
 from app.services.exercise_engine_v2 import (
     generate_exercise,
@@ -53,6 +56,12 @@ logger = logging.getLogger(__name__)
 
 # In-memory exercise cache (MVP — use Redis in prod for multi-process)
 _exercise_cache: dict[str, dict] = {}
+
+# Per-user count of slow queue exercises served in the current session.
+# Reset when analyze_session is called (= session end / start of next session tracking).
+_slow_served_session: dict[str, int] = {}
+
+SLOW_QUEUE_MAX_PER_SESSION = 10
 
 
 class AgentService:
@@ -145,13 +154,37 @@ class AgentService:
                 if not (operation_filter and "advanced" in operation_filter) and profile.global_level < 80:
                     difficulty = 4
 
-        # Check for spaced repetition items due (skip if operation filter or specific mode is active)
+        # ── Force difficulty 5 (21×21 → 99×99) for multiplication filter mode ──
+        is_mult_filter = operation_filter == ["multiplication"] or operation_filter == ("multiplication",)
+        if is_mult_filter:
+            difficulty = 5
+
+        # 1. Check slow queue
+        #    - Tables mode → source_mode="tables"
+        #    - Multiplication filter → source_mode="multiplication"
+        #    - Adaptive/free → any source_mode (no filter)
+        slow_exercise = None
+        if training_mode == "tables":
+            slow_exercise = await self._get_slow_queue_exercise(
+                UUID(str(instance.user_id)), source_mode="tables"
+            )
+        elif is_mult_filter:
+            slow_exercise = await self._get_slow_queue_exercise(
+                UUID(str(instance.user_id)), source_mode="multiplication"
+            )
+        elif not operation_filter:
+            slow_exercise = await self._get_slow_queue_exercise(UUID(str(instance.user_id)))
+
+        # 2. Fall back to spaced repetition queue (adaptive mode only)
         sr_exercise = None
-        if not operation_filter and training_mode not in ("tables",):
+        if not slow_exercise and not operation_filter and training_mode not in ("tables",):
             sr_exercise = await self._check_spaced_repetition(
                 UUID(str(instance.user_id)), skill_name
             )
-        if sr_exercise:
+
+        if slow_exercise:
+            exercise_obj = slow_exercise
+        elif sr_exercise:
             exercise_obj = sr_exercise
         else:
             exercise_obj = generate_exercise(skill_name, difficulty, sub_skill)
@@ -366,6 +399,10 @@ class AgentService:
             time_taken_ms=time_taken_ms,
             error_type=error_type,
         ))
+
+        # Update SM-2 interval for slow queue exercises (non-blocking)
+        if str(exercise_id) in _exercise_cache and _exercise_cache[str(exercise_id)].get("slow_queue_id"):
+            asyncio.create_task(self._update_slow_queue_sm2(str(exercise_id), time_taken_ms))
 
         return response
 
@@ -837,6 +874,326 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
             return f"Niveau {round(profile.global_level)}/100. Belle progression, continue ! 📈"
         else:
             return f"Niveau {round(profile.global_level)}/100. Chaque exercice te fait progresser ! 🚀"
+
+    # ══════════════════════════════════════════
+    #          SESSION ANALYSIS (end-of-series)
+    # ══════════════════════════════════════════
+
+    async def analyze_session(
+        self,
+        user_id: UUID,
+        results: list[dict],
+    ) -> dict:
+        """
+        Called at the end of each 20-exercise session.
+        - Flags slow exercises (tables_1_20 and multiplication skill only)
+        - Top 10 slowest → next_review_at = now (serve next session)
+        - Items 11+ → next_review_at = now + 2 days (future sessions)
+        - Non-multiplication slow skills → boost in adaptive mode
+        - Resets per-session slow-served counter for next session
+        """
+        TABLES_SKILLS = {"tables_1_20"}
+        MULT_SKILLS = {"multiplication"}
+        QUEUE_SKILLS = TABLES_SKILLS | MULT_SKILLS
+
+        # Reset session counter — new session starts
+        _slow_served_session[str(user_id)] = 0
+
+        slow_items: list[dict] = []
+
+        for r in results:
+            skill = r.get("skill_name") or r.get("exercise_type", "")
+            difficulty = int(r.get("difficulty", 1))
+            time_ms = int(r.get("time_ms", 0))
+            question = r.get("question", "")
+            correct_answer = r.get("correct_answer", "")
+
+            if not question or not skill or time_ms <= 0:
+                continue
+
+            threshold = get_slow_threshold(skill, difficulty)
+            if is_slow(skill, difficulty, time_ms):
+                slow_items.append({
+                    "skill": skill,
+                    "sub_skill": r.get("sub_skill"),
+                    "question": question,
+                    "correct_answer": correct_answer,
+                    "difficulty": difficulty,
+                    "time_ms": time_ms,
+                    "threshold_ms": threshold,
+                    "source_mode": "tables" if skill in TABLES_SKILLS else "multiplication",
+                    "in_queue": skill in QUEUE_SKILLS,
+                })
+
+        # Sort all slow items by time desc — slowest first
+        slow_items.sort(key=lambda x: x["time_ms"], reverse=True)
+
+        # Queue only tables_1_20 and multiplication for exact re-serving
+        queue_items = [item for item in slow_items if item["in_queue"]]
+        if queue_items:
+            # Top 10 → next session (next_review_at = now)
+            # Items 11+ → 2 sessions from now (approx 2 days)
+            asyncio.create_task(self._persist_slow_queue(user_id, queue_items))
+
+        # Non-queue slow skills → boost in adaptive mode next session
+        non_queue_slow_skills = list({
+            item["skill"] for item in slow_items if not item["in_queue"]
+        })
+        if non_queue_slow_skills:
+            asyncio.create_task(self._save_slow_skills(user_id, non_queue_slow_skills))
+
+        # Top 3 slowest across ALL results for summary display
+        top3_slowest = sorted(
+            [r for r in results if r.get("time_ms", 0) > 0],
+            key=lambda r: r.get("time_ms", 0),
+            reverse=True,
+        )[:3]
+
+        return {
+            "slow_count": len(slow_items),
+            "top3_slowest": [
+                {
+                    "question": r.get("question"),
+                    "time_ms": r.get("time_ms"),
+                    "threshold_ms": get_slow_threshold(
+                        r.get("skill_name") or r.get("exercise_type", ""),
+                        int(r.get("difficulty", 1)),
+                    ),
+                    "skill": r.get("skill_name") or r.get("exercise_type", ""),
+                }
+                for r in top3_slowest
+            ],
+        }
+
+    @staticmethod
+    def _commute_table_question(question: str, correct_answer: str) -> Optional[dict]:
+        """
+        For a tables question like '7 × 8 = ?' return {'question': '8 × 7 = ?'}.
+        Returns None if the question is already commuted or can't be parsed.
+        """
+        import re
+        m = re.match(r"(\d+)\s*[×x\*]\s*(\d+)", question)
+        if not m:
+            return None
+        a, b = int(m.group(1)), int(m.group(2))
+        if a == b:
+            return None  # same question when commuted
+        commuted_q = f"{b} × {a}"
+        if commuted_q == question.replace(" × ", " × "):
+            return None
+        return {"question": commuted_q, "correct_answer": correct_answer}
+
+    async def _persist_slow_queue(self, user_id: UUID, slow_items: list[dict]):
+        """
+        Upsert slow exercises into session_slow_queue with SM-2 scheduling.
+        - slow_items must be sorted by time desc (slowest first).
+        - Top 10 → next_review_at = now (serve next session).
+        - Items 11+ → next_review_at = now + 2 days (deferred).
+        - Tables: also insert/update the commuted question (8×7 when 7×8 is slow).
+        """
+        try:
+            now = datetime.now(timezone.utc)
+
+            async def _upsert_one(item: dict, rank: int):
+                # Top 10 scheduled for next session; rest deferred 2 days
+                review_at = now if rank < SLOW_QUEUE_MAX_PER_SESSION else now + timedelta(days=2)
+                try:
+                    existing = await asyncio.to_thread(
+                        lambda q=item["question"]: self.supabase
+                            .table("session_slow_queue")
+                            .select("id, consecutive_slow_sessions, review_interval")
+                            .eq("user_id", str(user_id))
+                            .eq("question", q)
+                            .limit(1)
+                            .execute()
+                    )
+                    if existing.data:
+                        row = existing.data[0]
+                        await asyncio.to_thread(
+                            lambda rid=row["id"]: self.supabase.table("session_slow_queue")
+                                .update({
+                                    "consecutive_slow_sessions": row["consecutive_slow_sessions"] + 1,
+                                    "consecutive_fast_sessions": 0,
+                                    "review_interval": 1,  # reset interval — was slow again
+                                    "next_review_at": review_at.isoformat(),
+                                    "time_taken_ms": item["time_ms"],
+                                    "last_seen_at": now.isoformat(),
+                                })
+                                .eq("id", rid)
+                                .execute()
+                        )
+                    else:
+                        await asyncio.to_thread(
+                            lambda: self.supabase.table("session_slow_queue").insert({
+                                "user_id": str(user_id),
+                                "skill": item["skill"],
+                                "sub_skill": item.get("sub_skill"),
+                                "question": item["question"],
+                                "correct_answer": item["correct_answer"],
+                                "difficulty": item["difficulty"],
+                                "time_taken_ms": item["time_ms"],
+                                "threshold_ms": item["threshold_ms"],
+                                "source_mode": item["source_mode"],
+                                "next_review_at": review_at.isoformat(),
+                                "review_interval": 1,
+                                "consecutive_slow_sessions": 1,
+                                "consecutive_fast_sessions": 0,
+                            }).execute()
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to upsert slow queue item '{item['question']}': {e}")
+
+            for rank, item in enumerate(slow_items):
+                await _upsert_one(item, rank)
+
+                # For tables_1_20: also queue commuted version (7×8 ↔ 8×7)
+                if item["source_mode"] == "tables":
+                    commuted = _commute_table_question(item["question"], item["correct_answer"])
+                    if commuted:
+                        commuted_item = {**item, "question": commuted["question"]}
+                        await _upsert_one(commuted_item, rank)
+
+        except Exception as e:
+            logger.warning(f"Failed to persist slow queue: {e}")
+
+    async def _save_slow_skills(self, user_id: UUID, slow_skills: list[str]):
+        """Persist slow non-multiplication skill names into agent state for boosted selection next session."""
+        try:
+            instance = await self.get_or_create_instance(user_id)
+            profile = self._load_profile(instance.state)
+            # Replace (fresh per session end — not cumulative)
+            profile.slow_skills = slow_skills
+            state_dict = self._save_profile(profile)
+            await asyncio.to_thread(
+                lambda: self.supabase.table("agent_instances")
+                    .update({"state": state_dict})
+                    .eq("id", str(instance.id))
+                    .execute()
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save slow skills: {e}")
+
+    async def _get_slow_queue_exercise(
+        self, user_id: UUID, source_mode: Optional[str] = None
+    ) -> Optional[object]:
+        """
+        Pull one due slow exercise from session_slow_queue (next_review_at <= now).
+        - source_mode: filter to "tables" or "multiplication" if specified.
+        - Capped at SLOW_QUEUE_MAX_PER_SESSION per session.
+        - Does NOT delete — pushes next_review_at forward (SM-2 interval).
+        - Stores slow_queue_id in exercise cache for SM-2 update on submit.
+        """
+        uid = str(user_id)
+        if _slow_served_session.get(uid, 0) >= SLOW_QUEUE_MAX_PER_SESSION:
+            return None
+
+        try:
+            now = datetime.now(timezone.utc)
+            query = (
+                self.supabase.table("session_slow_queue")
+                    .select("*")
+                    .eq("user_id", uid)
+                    .lte("next_review_at", now.isoformat())
+                    .order("next_review_at")
+                    .limit(1)
+            )
+            if source_mode:
+                query = query.eq("source_mode", source_mode)
+
+            result = await asyncio.to_thread(lambda: query.execute())
+            if not result.data:
+                return None
+
+            item = result.data[0]
+
+            # Push next_review_at forward so this item isn't served again this session
+            # (review_interval days from now — SM-2 base interval)
+            interval_days = max(1, item.get("review_interval", 1))
+            next_review = now + timedelta(days=interval_days)
+            await asyncio.to_thread(
+                lambda: self.supabase.table("session_slow_queue")
+                    .update({"next_review_at": next_review.isoformat(), "last_seen_at": now.isoformat()})
+                    .eq("id", item["id"])
+                    .execute()
+            )
+
+            _slow_served_session[uid] = _slow_served_session.get(uid, 0) + 1
+
+            from app.services.exercise_engine_v2 import GeneratedExercise, get_technique_tips
+            tips = get_technique_tips(item["skill"], 1)
+            tip = tips[0] if tips else None
+
+            exercise_id = str(uuid4())
+            # Store slow_queue_id in cache so submit_answer can update SM-2 on response
+            _exercise_cache[exercise_id] = {
+                "slow_queue_id": item["id"],
+                "slow_queue_threshold_ms": item.get("threshold_ms", 5000),
+                "slow_queue_review_interval": interval_days,
+                "slow_queue_consecutive_fast": item.get("consecutive_fast_sessions", 0),
+            }
+
+            return GeneratedExercise(
+                exercise_id=exercise_id,
+                skill=item["skill"],
+                sub_skill=item.get("sub_skill") or "",
+                question=item["question"],
+                correct_answer=item["correct_answer"],
+                difficulty=item["difficulty"],
+                time_limit_ms=EXPECTED_TIME_MS.get(item["difficulty"], 15000),
+                tip=tip,
+            )
+        except Exception as e:
+            logger.warning(f"Slow queue fetch failed: {e}")
+            return None
+
+    async def _update_slow_queue_sm2(self, exercise_id: str, time_taken_ms: Optional[int]):
+        """
+        After submitting an answer for a slow queue exercise:
+        - Fast (< threshold): double review_interval, increment consecutive_fast.
+          After 3 consecutive fast sessions → delete (mastered).
+        - Slow again: reset interval to 1, reset consecutive_fast to 0.
+        """
+        cache = _exercise_cache.get(exercise_id, {})
+        item_id = cache.get("slow_queue_id")
+        if not item_id:
+            return
+        try:
+            threshold_ms = cache.get("slow_queue_threshold_ms", 5000)
+            current_interval = cache.get("slow_queue_review_interval", 1)
+            consecutive_fast = cache.get("slow_queue_consecutive_fast", 0)
+            is_fast = time_taken_ms is not None and time_taken_ms < threshold_ms
+
+            if is_fast:
+                new_consecutive_fast = consecutive_fast + 1
+                if new_consecutive_fast >= 3:
+                    # Mastered — remove from queue
+                    await asyncio.to_thread(
+                        lambda: self.supabase.table("session_slow_queue")
+                            .delete().eq("id", item_id).execute()
+                    )
+                    return
+                new_interval = min(current_interval * 2, 30)  # cap at 30 days
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("session_slow_queue")
+                        .update({
+                            "review_interval": new_interval,
+                            "consecutive_fast_sessions": new_consecutive_fast,
+                        })
+                        .eq("id", item_id).execute()
+                )
+            else:
+                # Still slow — reset
+                await asyncio.to_thread(
+                    lambda: self.supabase.table("session_slow_queue")
+                        .update({
+                            "review_interval": 1,
+                            "consecutive_fast_sessions": 0,
+                            "consecutive_slow_sessions": cache.get("slow_queue_consecutive_fast", 0) + 1,
+                        })
+                        .eq("id", item_id).execute()
+                )
+        except Exception as e:
+            logger.warning(f"SM-2 slow queue update failed: {e}")
 
     def _generate_chat_response(
         self, profile: UserCognitiveProfile, message: str,
