@@ -75,7 +75,7 @@ function modeToApiParams(modes: string[]): { apiMode: string; apiOps: string[] |
       case "tables": return { apiMode: "tables", apiOps: undefined };
       case "advanced": return { apiMode: "free", apiOps: ["advanced"] };
       case "chain_add_sub": return { apiMode: "free", apiOps: ["chain"] };
-      case "chain_add_sub_mul": return { apiMode: "free", apiOps: ["mixed"] };
+      case "chain_add_sub_mul": return { apiMode: "free", apiOps: ["chain_mul"] };
       default: return { apiMode: "free", apiOps: [modes[0]] };
     }
   }
@@ -98,6 +98,7 @@ const SKILL_LABELS: Record<string, string> = {
   fast_multiplication: "Mult. rapides",
   mixed: "Mixte",
   chain: "Chaînes",
+  chain_mul: "Chaînes +−×",
 };
 
 const SKILL_ICONS: Record<string, string> = {
@@ -110,6 +111,7 @@ const SKILL_ICONS: Record<string, string> = {
   fast_multiplication: "⚡",
   mixed: "🔀",
   chain: "🔗",
+  chain_mul: "🔗",
   advanced: "🧠",
 };
 

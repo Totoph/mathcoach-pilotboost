@@ -113,6 +113,16 @@ SKILL_DEFINITIONS = {
             "chain_4plus",
         ],
     },
+    "chain_mul": {
+        "label": "Chaînes +−×",
+        "weight": 0.05,
+        "order": 12,
+        "sub_skills": [
+            "chain_mul_2",
+            "chain_mul_3",
+            "chain_mul_4plus",
+        ],
+    },
     "advanced": {
         "label": "Avancé",
         "weight": 0.06,
@@ -199,6 +209,7 @@ SKILL_THRESHOLD_CATEGORY: dict[str, str] = {
     "subtraction": "subtraction",
     "division": "division",
     "chain": "chain",
+    "chain_mul": "chain_mul",
     "mixed": "mixed",
     "advanced": "advanced",
 }
@@ -252,6 +263,7 @@ class SkillVector:
     fast_multiplication: SkillData = field(default_factory=SkillData)
     mixed: SkillData = field(default_factory=SkillData)
     chain: SkillData = field(default_factory=SkillData)
+    chain_mul: SkillData = field(default_factory=SkillData)
     advanced: SkillData = field(default_factory=SkillData)
 
     def get_skill(self, name: str) -> SkillData:

@@ -392,10 +392,8 @@ def _gen_chain(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExe
         parts = [str(start)]
 
         for _ in range(steps):
-            op = random.choice(["+", "−", "×"])
-            if op == "×":
-                n = random.randint(2, 5)
-            elif op == "+":
+            op = random.choice(["+", "−"])
+            if op == "+":
                 n = random.randint(1, 30)
             else:
                 n = random.randint(1, 20)
@@ -414,15 +412,64 @@ def _gen_chain(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExe
 
     answer = str(eval_result)
 
+    tip = "Calcule étape par étape, de gauche à droite."
+
+    return GeneratedExercise(
+        exercise_id=str(uuid4()), skill="chain", sub_skill=sub_skill or sub,
+        question=question, correct_answer=answer, difficulty=difficulty,
+        time_limit_ms=TIME_LIMITS[difficulty] + 5000 * (steps - 1), tip=tip,
+    )
+
+
+def _gen_chain_mul(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExercise:
+    """Chain calculations with +, −, and × only (no division)."""
+    if difficulty <= 2:
+        steps = 2
+        sub = "chain_mul_2"
+    elif difficulty <= 3:
+        steps = 3
+        sub = "chain_mul_3"
+    else:
+        steps = random.randint(3, 5)
+        sub = "chain_mul_4plus"
+
+    eval_result = 0
+    question = ""
+    for _attempt in range(60):
+        start = random.randint(2, 20)
+        parts = [str(start)]
+
+        for _ in range(steps):
+            op = random.choice(["+", "−", "×"])
+            if op == "×":
+                n = random.randint(2, 5)
+            elif op == "+":
+                n = random.randint(1, 30)
+            else:
+                n = random.randint(1, 20)
+            parts.append(f"{op} {n}")
+
+        question = " ".join(parts)
+        try:
+            eval_expr = question.replace("×", "*").replace("−", "-")
+            raw = eval(eval_expr)
+            if raw != int(raw):
+                continue
+            eval_result = int(raw)
+        except Exception:
+            continue
+        break
+
+    answer = str(eval_result)
+
     has_mult = "×" in question
-    has_add_sub = ("+" in question or "−" in question)
-    if has_mult and has_add_sub:
+    if has_mult:
         tip = "Priorité : × se calcule avant + et −. Commence par toutes les multiplications."
     else:
         tip = "Calcule étape par étape, de gauche à droite."
 
     return GeneratedExercise(
-        exercise_id=str(uuid4()), skill="chain", sub_skill=sub_skill or sub,
+        exercise_id=str(uuid4()), skill="chain_mul", sub_skill=sub_skill or sub,
         question=question, correct_answer=answer, difficulty=difficulty,
         time_limit_ms=TIME_LIMITS[difficulty] + 5000 * (steps - 1), tip=tip,
     )
@@ -537,6 +584,7 @@ GENERATORS = {
     "fast_multiplication": _gen_fast_multiplication,
     "mixed": _gen_mixed,
     "chain": _gen_chain,
+    "chain_mul": _gen_chain_mul,
     "advanced": _gen_advanced,
 }
 
