@@ -372,15 +372,8 @@ def _gen_mixed(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExe
 
 def _gen_chain(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExercise:
     """Chain calculations — sequential operations."""
-    if difficulty <= 2:
-        steps = 2
-        sub = "chain_2"
-    elif difficulty <= 3:
-        steps = 3
-        sub = "chain_3"
-    else:
-        steps = random.randint(3, 5)
-        sub = "chain_4plus"
+    steps = random.randint(3, 8)
+    sub = "chain_4plus"
 
     # Generate numbers and operators independently, then compute the answer
     # with eval() so it always respects standard operator precedence (× before + and −).
@@ -423,15 +416,8 @@ def _gen_chain(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExe
 
 def _gen_chain_mul(difficulty: int, sub_skill: Optional[str] = None) -> GeneratedExercise:
     """Chain calculations with +, −, and × only (no division)."""
-    if difficulty <= 2:
-        steps = 2
-        sub = "chain_mul_2"
-    elif difficulty <= 3:
-        steps = 3
-        sub = "chain_mul_3"
-    else:
-        steps = random.randint(3, 5)
-        sub = "chain_mul_4plus"
+    steps = random.randint(3, 8)
+    sub = "chain_mul_4plus"
 
     eval_result = 0
     question = ""
