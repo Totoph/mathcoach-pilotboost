@@ -214,6 +214,7 @@ export default function TrainClient() {
 
   // Input ref for keyboard focus
   const inputRef = useRef<HTMLInputElement>(null);
+  const newSeriesButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const mode = searchParams.get("mode");
@@ -240,6 +241,12 @@ export default function TrainClient() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (showPause) {
+      setTimeout(() => newSeriesButtonRef.current?.focus(), 50);
+    }
+  }, [showPause]);
 
   // Coach mastery suggestion: detect when a skill is well-mastered and weaknesses exist
   useEffect(() => {
@@ -396,6 +403,25 @@ export default function TrainClient() {
         setTimeout(() => inputRef.current?.focus(), 50);
       } catch (err) {
         console.error("Failed to load exercise:", err);
+        // Reset answer state so the user isn't blocked if the API failed
+        setAnswerState("idle");
+        // Retry once after a short delay
+        try {
+          await new Promise((res) => setTimeout(res, 800));
+          const { apiMode, apiOps } = modeToApiParams(overrides?.activeModes ?? activeModes);
+          const retryExercise = await api.getNextExercise(apiMode, apiOps);
+          setCurrentExercise(retryExercise);
+          setExerciseStartTime(Date.now());
+          setUserInput("");
+          setIsNegative(false);
+          setCorrectDisplay("");
+          setAnswerState("idle");
+          setSpeedPicked(null);
+          prefetchRef.current = api.getNextExercise(apiMode, apiOps);
+          setTimeout(() => inputRef.current?.focus(), 50);
+        } catch {
+          // Give up — user will see the old exercise with idle state and can retry manually
+        }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -668,6 +694,8 @@ export default function TrainClient() {
       if (newIdx >= SERIES_SIZE) {
         triggerSessionAnalysis(newResults);
         setTimeout(() => setShowPause(true), 800);
+      } else {
+        setTimeout(() => loadNextExercise(), 500);
       }
 
       api
@@ -1124,6 +1152,7 @@ export default function TrainClient() {
             </button>
           )}
           <button
+            ref={newSeriesButtonRef}
             onClick={handleStartNewSeries}
             disabled={seriesLoading}
             className="w-full py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"

@@ -177,19 +177,6 @@ const TECHNIQUES: Technique[] = [
     ],
   },
 
-  // ── Vitesse ──
-  {
-    title: "Estimation rapide",
-    category: "Vitesse",
-    description: "Arrondir tous les nombres pour estimer le résultat avant de calculer précisément.",
-    example: "48 × 22 ≈ ?",
-    steps: [
-      "48 ≈ 50, 22 ≈ 20",
-      "50 × 20 = 1 000",
-      "Le résultat exact (1 056) est proche de 1 000",
-      "Ça permet d'éliminer les réponses aberrantes",
-    ],
-  },
 ];
 
 const CATEGORY_COLORS: Record<string, { bg: string; text: string; icon: string }> = {

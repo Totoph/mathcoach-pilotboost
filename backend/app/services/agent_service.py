@@ -261,11 +261,15 @@ class AgentService:
                     .eq("id", item["id"])\
                     .execute()
 
-                return GeneratedExercise(
+                question_text = item["question"].replace("≈", "").strip()
+            if not question_text:
+                return None
+
+            return GeneratedExercise(
                     exercise_id=str(uuid4()),
                     skill=item["skill"],
                     sub_skill=item.get("sub_skill", ""),
-                    question=item["question"],
+                    question=question_text,
                     correct_answer=correct_answer,
                     difficulty=item["difficulty"],
                     time_limit_ms=EXPECTED_TIME_MS.get(item["difficulty"], 15000),
@@ -776,18 +780,11 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
     def _check_answer(
         self, user_answer: str, correct_answer: str, skill: str
     ) -> bool:
-        """Check if answer is correct, with tolerance for estimation."""
+        """Check if answer is correct (exact match)."""
         try:
             user_val = float(user_answer.strip().replace(",", "."))
             correct_val = float(correct_answer.strip().replace(",", "."))
-
-            # Exact match for most skills
-            if skill != "estimation":
-                return user_val == correct_val
-
-            # 10% tolerance for estimation
-            tolerance = max(abs(correct_val) * 0.10, 1)
-            return abs(user_val - correct_val) <= tolerance
+            return user_val == correct_val
         except (ValueError, TypeError):
             return False
 
@@ -909,6 +906,8 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
             correct_answer = r.get("correct_answer", "")
 
             if not question or not skill or time_ms <= 0:
+                continue
+            if "≈" in question:
                 continue
 
             threshold = get_slow_threshold(skill, difficulty)
@@ -1132,11 +1131,15 @@ Faiblesses : {', '.join(profile.weaknesses) if profile.weaknesses else 'aucune'}
                 "slow_queue_consecutive_fast": item.get("consecutive_fast_sessions", 0),
             }
 
+            question_text = item["question"].replace("≈", "").strip()
+            if not question_text:
+                return None
+
             return GeneratedExercise(
                 exercise_id=exercise_id,
                 skill=item["skill"],
                 sub_skill=item.get("sub_skill") or "",
-                question=item["question"],
+                question=question_text,
                 correct_answer=item["correct_answer"],
                 difficulty=item["difficulty"],
                 time_limit_ms=EXPECTED_TIME_MS.get(item["difficulty"], 15000),
